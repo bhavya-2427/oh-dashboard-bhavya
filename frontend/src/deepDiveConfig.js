@@ -39,9 +39,9 @@ export const METRICS_BY_CHECK = {
     { key: "flagged_count", label: "Possible mismatch", color: "#A6403D", byTlKey: "by_tl_missing" },
   ],
   social_media: [
-    { key: "total_count", label: "Records checked", color: "#2F3A4A" },
-    { key: "flagged_count", label: "Person missing", color: "#A6403D", byTlKey: "by_tl_missing" },
-    { key: "partial_count", label: "Officeholder missing", color: "#B08A2E", byTlKey: "by_tl_partial" },
+    { key: "total_count", label: "Total records", color: "#2F3A4A" },
+    { key: "flagged_count", label: "Missing ALL personal platforms", color: "#2E8B84", byTlKey: "by_tl_missing" },
+    { key: "partial_count", label: "Missing ALL official platforms", color: "#7A5AA8", byTlKey: "by_tl_partial" },
   ],
   overlapping_tenures: [
     { key: "total_count", label: "People checked", color: "#2F3A4A" },
@@ -69,7 +69,7 @@ export const DEEP_DIVE_TITLES = {
   naming_convention: ["Naming Convention Deep Dive", "Office titles checked and naming format mismatches — tracked day over day, by team lead."],
   spelling: ["Spelling Deep Dive", "Records checked, likely typos, and unrecognized words — tracked day over day, by team lead."],
   selection_method: ["Selection Method Deep Dive", "Records checked and selection method mismatches — tracked day over day, by team lead."],
-  social_media: ["Social Media Deep Dive", "Records checked, missing person accounts, and missing officeholder accounts — tracked day over day, by team lead."],
+  social_media: ["Social Media Deep Dive", "Total records, records missing every personal platform, and records missing every official platform — tracked day over day, by team lead."],
   overlapping_tenures: ["Overlapping Tenures Deep Dive", "People checked and overlapping tenure pairs found — tracked day over day."],
   lookalike_parties: ["Look-alike Parties Deep Dive", "Distinct party names and similar-looking pairs found — tracked day over day, by team lead."],
   multi_party: ["Multi-Party Deep Dive", "People checked and people linked to 2+ parties — tracked day over day."],

@@ -197,6 +197,12 @@ def check_social_media(df, detail=False, limit=None):
     oh_missing = missing_counts(OH_PLATFORMS)
     result = {
         "total_count": len(df),
+        # NOTE: this summed-across-all-platforms number is kept here only
+        # for backward compatibility with callers that don't need detail
+        # (e.g. the sidebar nav count via run_all/summary_counts). The
+        # detail endpoint in main.py OVERRIDES this with the count of
+        # records missing every platform, which is what the on-page cards
+        # and Deep Dive actually track — see main.py's social_media block.
         "flagged_count": sum(person_missing.values()) + sum(oh_missing.values()),
         "person_missing": person_missing,
         "officeholder_missing": oh_missing,
@@ -206,6 +212,23 @@ def check_social_media(df, detail=False, limit=None):
         all_blank_oh = df[(df[OH_PLATFORMS] == "").all(axis=1)]
         result["person_records"] = _all(all_blank_person[["person_id", "full_name", "state", "current_office"]])
         result["officeholder_records"] = _all(all_blank_oh[["office_id", "current_office", "state", "government_body"]])
+
+        # Per-platform flagged lists — one list per INDIVIDUAL platform
+        # (missing just that one, not necessarily all of them), so the
+        # frontend can drill into any single platform card and see exactly
+        # who/what is missing it, with its own TL breakdown and its own
+        # repeat-offender tracking — same drill-down pattern every other
+        # check's buckets already use.
+        person_platform_records = {}
+        for col in PERSON_PLATFORMS:
+            missing_rows = df[df[col] == ""]
+            person_platform_records[col] = _all(missing_rows[["person_id", "full_name", "state", "current_office"]])
+        oh_platform_records = {}
+        for col in OH_PLATFORMS:
+            missing_rows = df[df[col] == ""]
+            oh_platform_records[col] = _all(missing_rows[["office_id", "current_office", "state", "government_body"]])
+        result["person_platform_records"] = person_platform_records
+        result["officeholder_platform_records"] = oh_platform_records
     return result
 
 

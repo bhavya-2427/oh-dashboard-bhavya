@@ -211,6 +211,14 @@ a{color:inherit;}
   font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);
   margin-bottom:9px;font-weight:600;
 }
+/* Prevent long labels (e.g. "TOTAL RECORDS (VERIFIED + ACTIVE)") from
+   running underneath the absolutely-positioned "yesterday" badge in the
+   card's top-right corner — reserve space on the right whenever that
+   badge is present, so the label wraps/ends before reaching it instead
+   of overlapping the number inside the badge. */
+.stat-card:has(.stat-prev-badge) .label{
+  padding-right:52px;
+}
 .stat-card .value{font-family:'IBM Plex Mono',monospace;font-size:27px;font-weight:500;color:var(--ink);}
 .stat-card.flag{background:linear-gradient(180deg, var(--paper-2) 0%, var(--red-bg) 130%);}
 .stat-card.flag::before{background:var(--red);}
@@ -283,12 +291,8 @@ tr:last-child td{border-bottom:none;}
 
 /* Repeat-offender row highlight — same Person ID already flagged for
    this same issue (missing/partial DOB) yesterday and still unfixed
-   today. The "dt-row-repeat" class was already being applied correctly
-   in JSX (DataTable's rowClassName), but no matching style rule existed
-   here, so it never had any visible effect — rows never actually turned
-   red even when repeat=true was computed correctly on the backend.
-   !important is used so it overrides the even/odd zebra-striping and
-   hover rules above, which would otherwise mask it. */
+   today. !important is used so it overrides the even/odd zebra-striping
+   and hover rules above, which would otherwise mask it. */
 tbody tr.dt-row-repeat{background:var(--red-bg) !important;}
 tbody tr.dt-row-repeat:hover{background:rgba(166,64,61,0.18) !important;}
 tbody tr.dt-row-repeat td{border-bottom-color:rgba(166,64,61,0.25);}

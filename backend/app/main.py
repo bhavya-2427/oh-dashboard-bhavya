@@ -133,6 +133,7 @@ def _full_name_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
         "total_count": result["total_count"],
         "flagged_count": result["flagged_count"],
         "by_tl_missing": _by_tl_counts(flagged_records, state_to_tl),
+        "flagged_person_ids": [r.get("person_id") for r in flagged_records if r.get("person_id")],
     }
 
 
@@ -142,6 +143,7 @@ def _naming_convention_snapshot_payload(result: dict, state_to_tl: dict) -> dict
         "total_count": result["total_count"],
         "flagged_count": result["flagged_count"],
         "by_tl_missing": _by_tl_counts(flagged_records, state_to_tl),
+        "flagged_office_ids": [r.get("id") for r in flagged_records if r.get("id")],
     }
 
 
@@ -154,6 +156,8 @@ def _spelling_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
         "partial_count": result.get("unrecognized_count", len(unrecognized_records)),
         "by_tl_missing": _by_tl_counts(typo_records, state_to_tl),
         "by_tl_partial": _by_tl_counts(unrecognized_records, state_to_tl),
+        "typo_ids": [r.get("id") for r in typo_records if r.get("id")],
+        "unrecognized_ids": [r.get("id") for r in unrecognized_records if r.get("id")],
     }
 
 
@@ -167,22 +171,43 @@ def _selection_method_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
 
 
 def _social_media_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
-    """Split into two independently trackable metrics — person (personal
-    social accounts) and officeholder (official accounts) — each with its
-    OWN by-TL breakdown, rather than one merged number. Mirrors Missing
-    DOB's Missing/Partial split: clicking "Person missing" on Deep Dive
-    shows the person-side TL breakdown, clicking "Officeholder missing"
-    shows the office-side one."""
+    """Stores everything needed for BOTH the two "missing ALL platforms"
+    overview cards AND every individual platform card to have a prev-day
+    delta, a by-TL breakdown, and repeat-offender tracking:
+      - flagged_count/partial_count = COUNT of records missing every
+        platform on that side (matches by_tl_missing/by_tl_partial below
+        and the two on-page tables exactly — NOT a sum across the 6
+        individual platform counts, which double-counts a person/office
+        missing multiple platforms).
+      - person_missing/officeholder_missing = per-platform counts (used
+        for each individual platform card's own delta).
+      - by_tl_person_platform/by_tl_officeholder_platform = per-platform
+        by-TL breakdowns, one dict per platform.
+      - person_platform_ids/officeholder_platform_ids = per-platform
+        flagged ID lists, used to detect repeats for any single platform
+        (not just "missing all")."""
     person_records = result.get("person_records", [])
     oh_records = result.get("officeholder_records", [])
-    person_missing_total = sum((result.get("person_missing") or {}).values())
-    oh_missing_total = sum((result.get("officeholder_missing") or {}).values())
+    person_platform_records = result.get("person_platform_records", {})
+    oh_platform_records = result.get("officeholder_platform_records", {})
+
+    by_tl_person_platform = {p: _by_tl_counts(recs, state_to_tl) for p, recs in person_platform_records.items()}
+    by_tl_oh_platform = {p: _by_tl_counts(recs, state_to_tl) for p, recs in oh_platform_records.items()}
+
     return {
         "total_count": result["total_count"],
-        "flagged_count": person_missing_total,     # "person" metric slot
-        "partial_count": oh_missing_total,          # "officeholder" metric slot
+        "flagged_count": len(person_records),
+        "partial_count": len(oh_records),
+        "person_missing": result.get("person_missing", {}),
+        "officeholder_missing": result.get("officeholder_missing", {}),
         "by_tl_missing": _by_tl_counts(person_records, state_to_tl),
         "by_tl_partial": _by_tl_counts(oh_records, state_to_tl),
+        "person_missing_ids": [r.get("person_id") for r in person_records if r.get("person_id")],
+        "officeholder_missing_ids": [r.get("office_id") for r in oh_records if r.get("office_id")],
+        "by_tl_person_platform": by_tl_person_platform,
+        "by_tl_officeholder_platform": by_tl_oh_platform,
+        "person_platform_ids": {p: [r.get("person_id") for r in recs if r.get("person_id")] for p, recs in person_platform_records.items()},
+        "officeholder_platform_ids": {p: [r.get("office_id") for r in recs if r.get("office_id")] for p, recs in oh_platform_records.items()},
     }
 
 
@@ -194,12 +219,6 @@ def _overlapping_tenures_snapshot_payload(result: dict, state_to_tl: dict) -> di
 
 
 def _lookalike_parties_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
-    """Each flagged pair has no single `state` field (it's party-vs-party,
-    each side with its OWN state breakdown in states_a/states_b — a list
-    of {state, count}). To assign one TL per pair (same "one flagged item,
-    one TL" pattern every other check uses), combine both sides' state
-    counts and pick whichever TL covers the most members across the pair.
-    A pair with no state data on either side falls into "Unassigned"."""
     pairs = result.get("records", [])
 
     def dominant_tl_for_pair(pair: dict) -> str:
@@ -283,11 +302,6 @@ def _get_upload_for_date(db, day_iso: str):
 
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)):
-    """
-    Accepts an OH Excel export, parses the DB sheet, runs every
-    validation, stores results, and saves a Deep-Dive snapshot for EVERY
-    check that supports one (all 12 below).
-    """
     today_iso = date.today().isoformat()
     db = database.SessionLocal()
     try:
@@ -325,7 +339,6 @@ async def upload_excel(file: UploadFile = File(...)):
         state_to_tl = _state_to_tl_map(db)
         today_iso2 = date.today().isoformat()
 
-        # ---- Missing DOB ----
         mdob_result = validations.check_missing_dob(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "missing_dob", _missing_dob_snapshot_payload(mdob_result, state_to_tl))
         missing_records = mdob_result.get("records", [])
@@ -341,47 +354,36 @@ async def upload_excel(file: UploadFile = File(...)):
             combined_dob_records,
         )
 
-        # ---- Partial Dates ----
         pdates_result = validations.check_partial_dates(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "partial_dates", _partial_dates_snapshot_payload(pdates_result, state_to_tl))
 
-        # ---- Prefix ----
         prefix_result = validations.check_prefix(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "prefix", _prefix_snapshot_payload(prefix_result, state_to_tl))
 
-        # ---- Full Name ----
         full_name_result = validations.check_full_name(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "full_name", _full_name_snapshot_payload(full_name_result, state_to_tl))
 
-        # ---- Naming Convention ----
         naming_result = validations.check_naming_convention(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "naming_convention", _naming_convention_snapshot_payload(naming_result, state_to_tl))
 
-        # ---- Spelling ----
         spelling_result = validations.check_spelling_errors(df, detail=True, extra_allowlist=allowlist)
         database.save_daily_check_snapshot(db, today_iso2, "spelling", _spelling_snapshot_payload(spelling_result, state_to_tl))
 
-        # ---- Selection Method ----
         selection_result = validations.check_selection_method(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "selection_method", _selection_method_snapshot_payload(selection_result, state_to_tl))
 
-        # ---- Social Media (person/officeholder split) ----
         social_result = validations.check_social_media(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "social_media", _social_media_snapshot_payload(social_result, state_to_tl))
 
-        # ---- Overlapping Tenures ----
         overlap_result = validations.check_overlapping_tenures(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "overlapping_tenures", _overlapping_tenures_snapshot_payload(overlap_result, state_to_tl))
 
-        # ---- Look-alike Parties (TL assigned via dominant-state logic) ----
         lookalike_result = validations.check_lookalike_parties(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "lookalike_parties", _lookalike_parties_snapshot_payload(lookalike_result, state_to_tl))
 
-        # ---- Multi-Party ----
         multiparty_result = validations.check_multi_party(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "multi_party", _multi_party_snapshot_payload(multiparty_result, state_to_tl))
 
-        # ---- Upcoming Deadlines ----
         deadlines_result = validations.check_upcoming_deadlines(df, detail=True)
         database.save_daily_check_snapshot(db, today_iso2, "upcoming_deadlines", _upcoming_deadlines_snapshot_payload(deadlines_result, state_to_tl))
 
@@ -417,9 +419,6 @@ def get_latest_upload():
 
 @app.delete("/uploads/current")
 def clear_current_upload():
-    """
-    Removes today's Excel and its snapshots for EVERY check.
-    """
     today_iso = date.today().isoformat()
     db = database.SessionLocal()
     try:
@@ -478,8 +477,33 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
             unrecognized_records = result.get("unrecognized_records", [])
             result["by_tl_typos"] = _by_tl_counts(typo_records, state_to_tl)
             result["by_tl_unrecognized"] = _by_tl_counts(unrecognized_records, state_to_tl)
-            result["records"] = _tag_with_tl_and_pm(typo_records, state_to_tl, "typo")
-            result["unrecognized_records"] = _tag_with_tl_and_pm(unrecognized_records, state_to_tl, "unrecognized")
+            tagged_typos = _tag_with_tl_and_pm(typo_records, state_to_tl, "typo")
+            tagged_unrecognized = _tag_with_tl_and_pm(unrecognized_records, state_to_tl, "unrecognized")
+
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "spelling", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_flagged_count"] = prev.get("flagged_count")
+                result["prev_partial_count"] = prev.get("partial_count")
+                result["prev_by_tl_missing"] = prev.get("by_tl_missing", {})
+                result["prev_by_tl_partial"] = prev.get("by_tl_partial", {})
+
+                prev_typo_ids = set(prev.get("typo_ids", []))
+                prev_unrecognized_ids = set(prev.get("unrecognized_ids", []))
+                for rec in tagged_typos:
+                    rid = rec.get("id")
+                    rec["repeat"] = bool(rid) and rid in prev_typo_ids
+                for rec in tagged_unrecognized:
+                    rid = rec.get("id")
+                    rec["repeat"] = bool(rid) and rid in prev_unrecognized_ids
+            else:
+                for rec in tagged_typos:
+                    rec["repeat"] = False
+                for rec in tagged_unrecognized:
+                    rec["repeat"] = False
+
+            result["records"] = tagged_typos
+            result["unrecognized_records"] = tagged_unrecognized
             return result
         result = validations.REGISTRY[key](df, detail=True)
         if "records" in result and key not in ("missing_dob", "prefix"):
@@ -505,11 +529,166 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
             result["by_tl_full_name"] = _by_tl_counts(flagged_records, state_to_tl)
             result["records"] = _tag_with_tl(flagged_records, state_to_tl)
 
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "full_name", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_flagged_count"] = prev.get("flagged_count")
+                result["prev_by_tl_full_name"] = prev.get("by_tl_missing", {})
+
+                if "flagged_person_ids" not in prev:
+                    backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
+                    if backfill_upload_id:
+                        backfill_df = database.load_records(db, backfill_upload_id)
+                        if backfill_df is not None:
+                            backfill_result = validations.check_full_name(backfill_df, detail=True)
+                            prev["flagged_person_ids"] = [
+                                r.get("person_id") for r in backfill_result.get("records", []) if r.get("person_id")
+                            ]
+                            database.save_daily_check_snapshot(db, prev_date, "full_name", prev)
+
+                prev_ids = set(prev.get("flagged_person_ids", []))
+                for rec in result["records"]:
+                    pid = rec.get("person_id")
+                    rec["repeat"] = bool(pid) and pid in prev_ids
+            else:
+                for rec in result["records"]:
+                    rec["repeat"] = False
+
         if key == "naming_convention":
             state_to_tl = _state_to_tl_map(db)
             flagged_records = result.get("records", [])
             result["by_tl_naming_convention"] = _by_tl_counts(flagged_records, state_to_tl)
             result["records"] = _tag_with_tl(flagged_records, state_to_tl)
+
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "naming_convention", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_flagged_count"] = prev.get("flagged_count")
+                result["prev_by_tl_naming_convention"] = prev.get("by_tl_missing", {})
+
+                if "flagged_office_ids" not in prev:
+                    backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
+                    if backfill_upload_id:
+                        backfill_df = database.load_records(db, backfill_upload_id)
+                        if backfill_df is not None:
+                            backfill_result = validations.check_naming_convention(backfill_df, detail=True)
+                            prev["flagged_office_ids"] = [
+                                r.get("id") for r in backfill_result.get("records", []) if r.get("id")
+                            ]
+                            database.save_daily_check_snapshot(db, prev_date, "naming_convention", prev)
+
+                prev_ids = set(prev.get("flagged_office_ids", []))
+                for rec in result["records"]:
+                    oid = rec.get("id")
+                    rec["repeat"] = bool(oid) and oid in prev_ids
+            else:
+                for rec in result["records"]:
+                    rec["repeat"] = False
+
+        if key == "social_media":
+            state_to_tl = _state_to_tl_map(db)
+            person_records = _tag_with_tl(result.get("person_records", []), state_to_tl)
+            oh_records = _tag_with_tl(result.get("officeholder_records", []), state_to_tl)
+            person_platform_records = result.get("person_platform_records", {})
+            oh_platform_records = result.get("officeholder_platform_records", {})
+
+            # Per-platform TL-tagged records, keyed by platform column
+            # name (e.g. "sm_facebook") — used when a specific platform
+            # card is clicked, to show that platform's own flagged list.
+            tagged_person_platforms = {p: _tag_with_tl(recs, state_to_tl) for p, recs in person_platform_records.items()}
+            tagged_oh_platforms = {p: _tag_with_tl(recs, state_to_tl) for p, recs in oh_platform_records.items()}
+
+            result["person_records"] = person_records
+            result["officeholder_records"] = oh_records
+            result["person_platform_records"] = tagged_person_platforms
+            result["officeholder_platform_records"] = tagged_oh_platforms
+            result["by_tl_missing"] = _by_tl_counts(person_records, state_to_tl)
+            result["by_tl_partial"] = _by_tl_counts(oh_records, state_to_tl)
+
+            # "vs yesterday" (combined counts + EVERY individual platform's
+            # missing count) + repeat-offender flags — for the two "missing
+            # ALL platforms" tables AND every individual platform's own
+            # flagged list. Computed unconditionally regardless of any
+            # active state filter.
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "social_media", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_flagged_count"] = prev.get("flagged_count")
+                result["prev_partial_count"] = prev.get("partial_count")
+                result["prev_person_missing"] = prev.get("person_missing", {})
+                result["prev_officeholder_missing"] = prev.get("officeholder_missing", {})
+                result["prev_by_tl_missing"] = prev.get("by_tl_missing", {})
+                result["prev_by_tl_partial"] = prev.get("by_tl_partial", {})
+                result["prev_by_tl_person_platform"] = prev.get("by_tl_person_platform", {})
+                result["prev_by_tl_officeholder_platform"] = prev.get("by_tl_officeholder_platform", {})
+
+                # Backfill: an old snapshot saved before the per-platform
+                # ID lists existed won't have those keys — recompute once
+                # from that day's original stored Excel, then save the
+                # backfilled payload so future loads use it directly.
+                needs_backfill = (
+                    "person_missing_ids" not in prev
+                    or "officeholder_missing_ids" not in prev
+                    or "person_platform_ids" not in prev
+                    or "officeholder_platform_ids" not in prev
+                )
+                if needs_backfill:
+                    backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
+                    if backfill_upload_id:
+                        backfill_df = database.load_records(db, backfill_upload_id)
+                        if backfill_df is not None:
+                            backfill_result = validations.check_social_media(backfill_df, detail=True)
+                            b_person_records = backfill_result.get("person_records", [])
+                            b_oh_records = backfill_result.get("officeholder_records", [])
+                            b_person_platform_records = backfill_result.get("person_platform_records", {})
+                            b_oh_platform_records = backfill_result.get("officeholder_platform_records", {})
+                            prev["person_missing_ids"] = [r.get("person_id") for r in b_person_records if r.get("person_id")]
+                            prev["officeholder_missing_ids"] = [r.get("office_id") for r in b_oh_records if r.get("office_id")]
+                            prev["person_platform_ids"] = {
+                                p: [r.get("person_id") for r in recs if r.get("person_id")]
+                                for p, recs in b_person_platform_records.items()
+                            }
+                            prev["officeholder_platform_ids"] = {
+                                p: [r.get("office_id") for r in recs if r.get("office_id")]
+                                for p, recs in b_oh_platform_records.items()
+                            }
+                            database.save_daily_check_snapshot(db, prev_date, "social_media", prev)
+
+                prev_person_ids = set(prev.get("person_missing_ids", []))
+                prev_oh_ids = set(prev.get("officeholder_missing_ids", []))
+                prev_person_platform_ids = prev.get("person_platform_ids", {})
+                prev_oh_platform_ids = prev.get("officeholder_platform_ids", {})
+
+                for rec in result["person_records"]:
+                    pid = rec.get("person_id")
+                    rec["repeat"] = bool(pid) and pid in prev_person_ids
+                for rec in result["officeholder_records"]:
+                    oid = rec.get("office_id")
+                    rec["repeat"] = bool(oid) and oid in prev_oh_ids
+
+                for platform, recs in result["person_platform_records"].items():
+                    prev_ids_for_platform = set(prev_person_platform_ids.get(platform, []))
+                    for rec in recs:
+                        pid = rec.get("person_id")
+                        rec["repeat"] = bool(pid) and pid in prev_ids_for_platform
+                for platform, recs in result["officeholder_platform_records"].items():
+                    prev_ids_for_platform = set(prev_oh_platform_ids.get(platform, []))
+                    for rec in recs:
+                        oid = rec.get("office_id")
+                        rec["repeat"] = bool(oid) and oid in prev_ids_for_platform
+            else:
+                for rec in result["person_records"]:
+                    rec["repeat"] = False
+                for rec in result["officeholder_records"]:
+                    rec["repeat"] = False
+                for recs in result["person_platform_records"].values():
+                    for rec in recs:
+                        rec["repeat"] = False
+                for recs in result["officeholder_platform_records"].values():
+                    for rec in recs:
+                        rec["repeat"] = False
+
+            return result
 
         if key == "missing_dob":
             state_to_tl = _state_to_tl_map(db)
@@ -522,39 +701,41 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
                 + _tag_with_tl_and_pm(partial_records, state_to_tl, "P")
             )
 
-            if not state:
-                prev_date, prev = database.get_previous_check_snapshot_with_date(db, "missing_dob", date.today().isoformat())
-                if prev:
-                    result["prev_total_count"] = prev.get("total_count")
-                    result["prev_flagged_count"] = prev.get("flagged_count")
-                    result["prev_partial_count"] = prev.get("partial_count")
-                    result["prev_by_tl_missing"] = prev.get("by_tl_missing", {})
-                    result["prev_by_tl_partial"] = prev.get("by_tl_partial", {})
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "missing_dob", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_flagged_count"] = prev.get("flagged_count")
+                result["prev_partial_count"] = prev.get("partial_count")
+                result["prev_by_tl_missing"] = prev.get("by_tl_missing", {})
+                result["prev_by_tl_partial"] = prev.get("by_tl_partial", {})
 
-                    if "missing_person_ids" not in prev or "partial_person_ids" not in prev:
-                        backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
-                        if backfill_upload_id:
-                            backfill_df = database.load_records(db, backfill_upload_id)
-                            if backfill_df is not None:
-                                backfill_result = validations.check_missing_dob(backfill_df, detail=True)
-                                prev["missing_person_ids"] = [
-                                    r.get("person_id") for r in backfill_result.get("records", []) if r.get("person_id")
-                                ]
-                                prev["partial_person_ids"] = [
-                                    r.get("person_id") for r in backfill_result.get("partial_records", []) if r.get("person_id")
-                                ]
-                                database.save_daily_check_snapshot(db, prev_date, "missing_dob", prev)
+                if "missing_person_ids" not in prev or "partial_person_ids" not in prev:
+                    backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
+                    if backfill_upload_id:
+                        backfill_df = database.load_records(db, backfill_upload_id)
+                        if backfill_df is not None:
+                            backfill_result = validations.check_missing_dob(backfill_df, detail=True)
+                            prev["missing_person_ids"] = [
+                                r.get("person_id") for r in backfill_result.get("records", []) if r.get("person_id")
+                            ]
+                            prev["partial_person_ids"] = [
+                                r.get("person_id") for r in backfill_result.get("partial_records", []) if r.get("person_id")
+                            ]
+                            database.save_daily_check_snapshot(db, prev_date, "missing_dob", prev)
 
-                    prev_missing_ids = set(prev.get("missing_person_ids", []))
-                    prev_partial_ids = set(prev.get("partial_person_ids", []))
-                    for rec in result["records"]:
-                        pid = rec.get("person_id")
-                        if rec.get("pm") == "M":
-                            rec["repeat"] = bool(pid) and pid in prev_missing_ids
-                        elif rec.get("pm") == "P":
-                            rec["repeat"] = bool(pid) and pid in prev_partial_ids
-                        else:
-                            rec["repeat"] = False
+                prev_missing_ids = set(prev.get("missing_person_ids", []))
+                prev_partial_ids = set(prev.get("partial_person_ids", []))
+                for rec in result["records"]:
+                    pid = rec.get("person_id")
+                    if rec.get("pm") == "M":
+                        rec["repeat"] = bool(pid) and pid in prev_missing_ids
+                    elif rec.get("pm") == "P":
+                        rec["repeat"] = bool(pid) and pid in prev_partial_ids
+                    else:
+                        rec["repeat"] = False
+            else:
+                for rec in result["records"]:
+                    rec["repeat"] = False
 
         if key == "partial_dates":
             state_to_tl = _state_to_tl_map(db)
@@ -573,30 +754,32 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
                 rec["issue_type"] = rec.pop("pm")
             result["records"] = tagged_blank_start + tagged_blank_end + tagged_partial
 
-            if not state:
-                prev_date, prev = database.get_previous_check_snapshot_with_date(db, "partial_dates", date.today().isoformat())
-                if prev:
-                    result["prev_total_count"] = prev.get("total_count")
-                    result["prev_blank_start"] = prev.get("blank_start")
-                    result["prev_blank_end"] = prev.get("blank_end")
-                    result["prev_partial_count"] = prev.get("partial_count")
-                    result["prev_by_tl_blank_start"] = prev.get("by_tl_blank_start", {})
-                    result["prev_by_tl_blank_end"] = prev.get("by_tl_blank_end", {})
-                    result["prev_by_tl_partial"] = prev.get("by_tl_partial", {})
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "partial_dates", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_blank_start"] = prev.get("blank_start")
+                result["prev_blank_end"] = prev.get("blank_end")
+                result["prev_partial_count"] = prev.get("partial_count")
+                result["prev_by_tl_blank_start"] = prev.get("by_tl_blank_start", {})
+                result["prev_by_tl_blank_end"] = prev.get("by_tl_blank_end", {})
+                result["prev_by_tl_partial"] = prev.get("by_tl_partial", {})
 
-                    prev_bs_ids = set(prev.get("blank_start_office_ids", []))
-                    prev_be_ids = set(prev.get("blank_end_office_ids", []))
-                    prev_p_ids = set(prev.get("partial_office_ids", []))
-                    for rec in result["records"]:
-                        oid = rec.get("office_id")
-                        if rec.get("issue_type") == "blank_start":
-                            rec["repeat"] = bool(oid) and oid in prev_bs_ids
-                        elif rec.get("issue_type") == "blank_end":
-                            rec["repeat"] = bool(oid) and oid in prev_be_ids
-                        elif rec.get("issue_type") == "partial":
-                            rec["repeat"] = bool(oid) and oid in prev_p_ids
-                        else:
-                            rec["repeat"] = False
+                prev_bs_ids = set(prev.get("blank_start_office_ids", []))
+                prev_be_ids = set(prev.get("blank_end_office_ids", []))
+                prev_p_ids = set(prev.get("partial_office_ids", []))
+                for rec in result["records"]:
+                    oid = rec.get("office_id")
+                    if rec.get("issue_type") == "blank_start":
+                        rec["repeat"] = bool(oid) and oid in prev_bs_ids
+                    elif rec.get("issue_type") == "blank_end":
+                        rec["repeat"] = bool(oid) and oid in prev_be_ids
+                    elif rec.get("issue_type") == "partial":
+                        rec["repeat"] = bool(oid) and oid in prev_p_ids
+                    else:
+                        rec["repeat"] = False
+            else:
+                for rec in result["records"]:
+                    rec["repeat"] = False
 
         return result
     finally:
@@ -674,14 +857,6 @@ def _deep_dive_periods_for_range(range_key: str, today: date) -> list:
 
 @app.get("/deep-dive/{check_key}")
 def get_check_deep_dive(check_key: str, range: str = "month"):
-    """
-    Generic Deep Dive endpoint used by every check's trend page.
-
-    '1w' -> 5 individual weekday bars (exact-date lookup, blank if no
-    upload that exact day). '2w'/'3w'/'4w'/'month'/'quarter' -> one bar
-    per calendar week/month/quarter, value = latest snapshot anywhere in
-    that period (blank only if NO upload happened in the whole period).
-    """
     if check_key not in DEEP_DIVE_CHECK_KEYS:
         raise HTTPException(status_code=404, detail=f"No Deep Dive available for '{check_key}'")
 
@@ -715,7 +890,6 @@ def get_check_deep_dive(check_key: str, range: str = "month"):
         db.close()
 
 
-# Backward-compat alias
 @app.get("/missing-dob/deep-dive")
 def get_missing_dob_deep_dive(range: str = "month"):
     return get_check_deep_dive("missing_dob", range)

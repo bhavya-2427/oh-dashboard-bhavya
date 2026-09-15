@@ -4,26 +4,26 @@ import DataTable, { downloadCsv } from "./DataTable";
 import { METRICS_BY_CHECK } from "../deepDiveConfig";
 
 const TITLES = {
-  prefix: ["Prefix validation", "Compares each person's Prefix (Mr., Ms., etc.) to their Gender — Male should use Mr., Female should use Ms. Dr., Prof., Capt., Adv., and Col. are accepted for either gender. Only Verified and Approved, Active seats are checked."],
-  full_name: ["Full name format", "Checks that First Name and Last Name are both filled in whenever a person has any name data at all — only Middle Name is allowed to be blank. Also catches stray leading/trailing or double spaces in the Full Name. Only Verified and Approved, Active seats are checked."],
+  prefix: ["Prefix validation", "Compares each person's Prefix (Mr., Ms., etc.) to their Gender — Male should use Mr., Female should use Ms. Dr., Prof., Capt., Adv., and Col. are accepted for either gender. Only Verified and Approved, Active persons are checked."],
+  full_name: ["Full name format", "Checks that First Name and Last Name are both filled in whenever a person has any name data at all — only Middle Name is allowed to be blank. Also catches stray leading/trailing or double spaces in the Full Name. Only Verified and Approved, Active persons are checked."],
   govt_body_status: ["Govt body unverified status", "Cross-checks every office against the Government Body export. An office is flagged if it has no Government Body linked at all, or if the Government Body it's linked to has a Status other than \"Verified and Approved\". Runs on all offices, not just active ones — the goal is to catch every broken or unverified link, wherever it is."],
-  partial_dates: ["Partial dates", "Classifies each record's Start Date and End Date as complete, partial (only a year, or only a year and month), or fully blank. Only Verified and Approved, Active seats are checked."],
-  social_media: ["Missing social media", "Checks whether social media handles are filled in — the person's own personal accounts and the officeholder's official accounts are checked and shown separately. Only Verified and Approved, Active seats are checked."],
+  partial_dates: ["Partial dates", "Classifies each record's Start Date and End Date as complete, partial (only a year, or only a year and month), or fully blank. Only Verified and Approved, Active persons are checked."],
+  social_media: ["Missing social media", "Checks whether social media handles are filled in — the person's own personal accounts and the officeholder's official accounts are checked and shown separately. Only Verified and Approved, Active persons are checked."],
   missing_dob: ["Missing date of birth", "Flags any record with no Date of Birth on file, and separately any record with only a partial Date of Birth (year only, or year and month). Only Verified and Approved, Active persons are checked."],
-  selection_method: ["Selection method mismatch", "Checks that the Seat Placement Method (e.g. Directly Elected, Nominated) makes sense for that office's role. Only Verified and Approved, Active seats are checked."],
+  selection_method: ["Selection method mismatch", "Checks that the Seat Placement Method (e.g. Directly Elected, Nominated) makes sense for that office's role. Only Verified and Approved, Active persons are checked."],
   seat_status: ["Vacant seats by state", "Classifies every seat as filled (Active) or vacant. A vacant seat gets a 60-day grace period after its End Date before it's flagged as overdue for removal from the register. Runs on all records — tracking vacancies is the whole point of this check."],
-  overlapping_tenures: ["Overlapping tenures", "Finds a person holding two tenures of the SAME seat type (e.g. two MLA seats) with overlapping dates — not physically possible. Concurrent Minister portfolios, a Governor's temporary additional charge of another state, and a Speaker who's also an MLA are all confirmed-normal and never flagged. Only Verified and Approved, Active seats are checked, so an overlap is only caught while both sides are still active."],
-  lookalike_parties: ["Look-alike parties", "Finds party names that look nearly identical (e.g. \"Kerala Congress\" vs \"Kerala Congress (B)\") and shows each side's member count, so a human can judge whether it's a genuine duplicate or two real, separate parties. Only Verified and Approved, Active seats are checked."],
-  multi_party: ["Multi-party check", "Flags any Person ID linked to more than one distinct party across their tenure records. Only Verified and Approved, Active seats are checked."],
+  overlapping_tenures: ["Overlapping tenures", "Finds a person holding two tenures of the SAME seat type (e.g. two MLA seats) with overlapping dates — not physically possible. Concurrent Minister portfolios, a Governor's temporary additional charge of another state, and a Speaker who's also an MLA are all confirmed-normal and never flagged. Only Verified and Approved, Active persons are checked, so an overlap is only caught while both sides are still active."],
+  lookalike_parties: ["Look-alike parties", "Finds party names that look nearly identical (e.g. \"Kerala Congress\" vs \"Kerala Congress (B)\") and shows each side's member count, so a human can judge whether it's a genuine duplicate or two real, separate parties. Only Verified and Approved, Active persons are checked."],
+  multi_party: ["Multi-party check", "Flags any Person ID linked to more than one distinct party across their tenure records. Only Verified and Approved, Active persons are checked."],
   spelling: ["Spelling errors", "Checks Current Office and Government Body text for two things: (1) Likely typos — a misspelled word with a confident, close dictionary match. (2) Unrecognized words — a word not in any dictionary with no close match, usually a regional/Hindi term or an Indian proper noun; mark it correct once and it's remembered forever, on every future upload. Only Verified and Approved, Active persons are checked."],
-  naming_convention: ["Naming convention", "Flags an office title that starts with a known role (Minister, MLA, Governor, etc.) but doesn't follow the manager-confirmed exact format for that role — e.g. missing portfolio or jurisdiction. Only Verified and Approved, Active seats are checked."],
+  naming_convention: ["Naming convention", "Flags an office title that starts with a known role (Minister, MLA, Governor, etc.) but doesn't follow the manager-confirmed exact format for that role — e.g. missing portfolio or jurisdiction. Only Verified and Approved, Active persons are checked."],
   upcoming_deadlines: ["Upcoming deadlines", "Flags any tenure whose End Date falls within the next 15 days, so nobody misses a seat that needs action soon. A record disappears from this list on its own once its End Date has passed."],
 };
 
 // Shared filter bar — State + Team Lead + (optionally) Recurrence, rendered
 // as compact rounded pills in a single row, right above the record table.
-// `onRecurrenceChange` is only passed on pages that support it (currently
-// Missing DOB) — when absent, that third pill simply doesn't render.
+// `onRecurrenceChange` is only passed on pages that support it — when
+// absent, that third pill simply doesn't render.
 function FilterBar({ state, onStateChange, states, tlFilter, onTlFilterChange, tlNames, recurrence, onRecurrenceChange }) {
   return (
     <div className="filter-bar-row">
@@ -76,19 +76,12 @@ export default function ValidationPage({ uploadId, pageKey, state, onStateChange
       .finally(() => setLoading(false));
   }, [uploadId, pageKey, state]);
 
-  // Reset the recurrence filter whenever a different check page is opened,
-  // so it doesn't silently carry over (e.g. "repeat" selected on Missing
-  // DOB staying selected after navigating to Prefix).
   useEffect(() => {
     setRecurrence("all");
   }, [pageKey]);
 
   const [title, subtitle] = TITLES[pageKey] || [pageKey, ""];
 
-  // Deep Dive is available on this page only if the check is registered
-  // in METRICS_BY_CHECK (the single config every check's trend page reads
-  // from) — Govt Body and Translations, for instance, are intentionally
-  // absent from that config and so never show this button.
   const hasDeepDive = Boolean(METRICS_BY_CHECK[pageKey]);
 
   return (
@@ -138,7 +131,19 @@ function ValidationBody({ pageKey, data, tlFilter, recurrence, state, onStateCha
     case "prefix":
       return <PrefixBody data={data} tlFilter={tlFilter} />;
     case "full_name":
-      return <FullNameBody data={data} tlFilter={tlFilter} />;
+      return (
+        <FullNameBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          state={state}
+          onStateChange={onStateChange}
+          states={states}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
+      );
     case "govt_body_status":
       return (
         <>
@@ -155,35 +160,32 @@ function ValidationBody({ pageKey, data, tlFilter, recurrence, state, onStateCha
         </>
       );
     case "partial_dates":
-      return <PartialDatesBody data={data} tlFilter={tlFilter} />;
+      return (
+        <PartialDatesBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          state={state}
+          onStateChange={onStateChange}
+          states={states}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
+      );
     case "social_media":
       return (
-        <>
-          <div className="section-title" style={{ marginTop: 0 }}>Person — personal social media (verified + active only)</div>
-          <div className="platform-grid">
-            {Object.entries(data.person_missing || {}).map(([k, v]) => (
-              <Stat key={k} label={`${labelize(k)} missing`} value={v} tone={toneFor(v, data.total_count)} sub={`of ${data.total_count} records`} />
-            ))}
-          </div>
-          <div className="section-title">Officeholder — official social media (verified + active only)</div>
-          <div className="platform-grid">
-            {Object.entries(data.officeholder_missing || {}).map(([k, v]) => (
-              <Stat key={k} label={`${labelize(k)} missing`} value={v} tone={toneFor(v, data.total_count)} sub={`of ${data.total_count} records`} />
-            ))}
-          </div>
-          <Table
-            title="Records missing all personal social media"
-            cols={["person_id", "full_name", "state", "current_office"]}
-            headers={["Person ID", "Name", "State", "Office"]}
-            rows={data.person_records}
-          />
-          <Table
-            title="Records missing all official social media"
-            cols={["office_id", "current_office", "state", "government_body"]}
-            headers={["Office ID", "Office", "State", "Govt body"]}
-            rows={data.officeholder_records}
-          />
-        </>
+        <SocialMediaBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          state={state}
+          onStateChange={onStateChange}
+          states={states}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
       );
     case "missing_dob":
       return (
@@ -296,9 +298,33 @@ function ValidationBody({ pageKey, data, tlFilter, recurrence, state, onStateCha
         </>
       );
     case "spelling":
-      return <SpellingBody data={data} tlFilter={tlFilter} />;
+      return (
+        <SpellingBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          state={state}
+          onStateChange={onStateChange}
+          states={states}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
+      );
     case "naming_convention":
-      return <NamingConventionBody data={data} tlFilter={tlFilter} />;
+      return (
+        <NamingConventionBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          state={state}
+          onStateChange={onStateChange}
+          states={states}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
+      );
     case "upcoming_deadlines":
       return (
         <>
@@ -329,18 +355,22 @@ function colorForTl(tlName, tlNames) {
   return TL_COLOR_PALETTE[(idx < 0 ? 0 : idx) % TL_COLOR_PALETTE.length];
 }
 
+// Fixed accent colors for the Social Media check's two sections — Person
+// (personal accounts) is teal, Officeholder (official accounts) is
+// purple — so the two groups of platform cards read visually apart from
+// each other at a glance, independent of each platform's own severity.
+const PERSON_ACCENT = "#2E8B84";
+const OFFICEHOLDER_ACCENT = "#7A5AA8";
+
 // ---------- Prefix check: clickable Records checked/Correct/Mismatched/Blank + per-TL split ----------
 function PrefixBody({ data, tlFilter }) {
-  // "total" | "correct" | "mismatch" | "blank" — which card is active.
-  // Only Mismatched and Blank have a per-TL breakdown (Records checked and
-  // Prefix correct aren't "issues" that get routed to a TL for fixing).
   const [selected, setSelected] = useState("total");
 
   const byTlMismatch = data.by_tl_mismatch || {};
   const byTlBlank = data.by_tl_blank || {};
   const tlNames = Array.from(new Set([...Object.keys(byTlMismatch), ...Object.keys(byTlBlank)])).sort();
 
-  const allRecords = data.records || []; // tagged with tl_name + issue_type ("mismatch"/"blank") by the backend
+  const allRecords = data.records || [];
 
   const visibleRows = allRecords.filter((r) => {
     if (selected === "mismatch" && r.issue_type !== "mismatch") return false;
@@ -427,15 +457,23 @@ function PrefixBody({ data, tlFilter }) {
   );
 }
 
-// ---------- Full name format: clickable Records checked/Format errors + per-TL split ----------
-function FullNameBody({ data, tlFilter }) {
+// ---------- Full name format: clickable Records checked/Format errors + per-TL split + repeat highlighting + State/TL/Status filters ----------
+function FullNameBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
   const byTlFullName = data.by_tl_full_name || {};
   const tlNames = Object.keys(byTlFullName).sort();
 
-  const allRecords = data.records || []; // tagged with tl_name by the backend
-  const visibleRows = allRecords.filter((r) => !tlFilter || r.tl_name === tlFilter);
+  const allRecords = data.records || [];
+
+  const visibleRows = allRecords.filter((r) => {
+    if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
+    return true;
+  });
+
+  const repeatCount = allRecords.filter((r) => r.repeat).length;
 
   const topRowStyle = {
     display: "grid",
@@ -455,12 +493,14 @@ function FullNameBody({ data, tlFilter }) {
         <Stat
           label="Records checked"
           value={data.total_count}
+          prevValue={data.prev_total_count}
           active={selected === "total"}
           onClick={() => setSelected("total")}
         />
         <Stat
           label="Format errors"
           value={data.flagged_count}
+          prevValue={data.prev_flagged_count}
           tone="flag"
           active={selected === "flagged"}
           onClick={() => setSelected("flagged")}
@@ -474,6 +514,7 @@ function FullNameBody({ data, tlFilter }) {
               key={tl}
               label={tl}
               value={byTlFullName[tl] || 0}
+              prevValue={(data.prev_by_tl_full_name || {})[tl]}
               color={colorForTl(tl, tlNames)}
               compact
             />
@@ -481,25 +522,55 @@ function FullNameBody({ data, tlFilter }) {
         </div>
       )}
 
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+          Red row = same Person ID was already flagged for this same issue yesterday and is still unfixed today
+        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+          — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total
+        </span>
+      </div>
+
+      <FilterBar
+        state={state}
+        onStateChange={onStateChange}
+        states={states}
+        tlFilter={tlFilter}
+        onTlFilterChange={onTlFilterChange}
+        tlNames={tlNameList}
+        recurrence={recurrence}
+        onRecurrenceChange={onRecurrenceChange}
+      />
+
       <Table
         title="Flagged records"
         cols={["person_id", "full_name", "first_name", "middle_name", "last_name", "state", "party_full_name", "issues", "tl_name"]}
         headers={["Person ID", "Full name", "First", "Middle", "Last", "State", "Party", "Issue(s)", "TL"]}
         rows={visibleRows}
+        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
       />
     </>
   );
 }
 
-// ---------- Naming convention: clickable Total/Format mismatches + per-TL split ----------
-function NamingConventionBody({ data, tlFilter }) {
+// ---------- Naming convention: clickable Total/Format mismatches + per-TL split + repeat highlighting + State/TL/Status filters ----------
+function NamingConventionBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
   const byTlNaming = data.by_tl_naming_convention || {};
   const tlNames = Object.keys(byTlNaming).sort();
 
-  const allRecords = data.records || []; // tagged with tl_name by the backend
-  const visibleRows = allRecords.filter((r) => !tlFilter || r.tl_name === tlFilter);
+  const allRecords = data.records || [];
+
+  const visibleRows = allRecords.filter((r) => {
+    if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
+    return true;
+  });
+
+  const repeatCount = allRecords.filter((r) => r.repeat).length;
 
   const topRowStyle = {
     display: "grid",
@@ -519,12 +590,14 @@ function NamingConventionBody({ data, tlFilter }) {
         <Stat
           label="Total office titles checked"
           value={data.total_count}
+          prevValue={data.prev_total_count}
           active={selected === "total"}
           onClick={() => setSelected("total")}
         />
         <Stat
           label="Format mismatches"
           value={data.flagged_count}
+          prevValue={data.prev_flagged_count}
           tone="flag"
           active={selected === "flagged"}
           onClick={() => setSelected("flagged")}
@@ -538,6 +611,7 @@ function NamingConventionBody({ data, tlFilter }) {
               key={tl}
               label={tl}
               value={byTlNaming[tl] || 0}
+              prevValue={(data.prev_by_tl_naming_convention || {})[tl]}
               color={colorForTl(tl, tlNames)}
               compact
             />
@@ -545,18 +619,40 @@ function NamingConventionBody({ data, tlFilter }) {
         </div>
       )}
 
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+          Red row = same office title was already flagged for this same issue yesterday and is still unfixed today
+        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+          — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total
+        </span>
+      </div>
+
+      <FilterBar
+        state={state}
+        onStateChange={onStateChange}
+        states={states}
+        tlFilter={tlFilter}
+        onTlFilterChange={onTlFilterChange}
+        tlNames={tlNameList}
+        recurrence={recurrence}
+        onRecurrenceChange={onRecurrenceChange}
+      />
+
       <Table
         title="Naming convention mismatches"
         cols={["id", "value", "expected", "state", "tl_name"]}
         headers={["Office ID", "Office title", "Expected format", "State", "TL"]}
         rows={visibleRows}
+        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
       />
     </>
   );
 }
 
-// ---------- Partial dates: clickable Total/Blank start/Blank end/Partial + per-TL split + repeat highlighting ----------
-function PartialDatesBody({ data, tlFilter }) {
+// ---------- Partial dates: clickable Total/Blank start/Blank end/Partial + per-TL split + repeat highlighting + State/TL/Status filters ----------
+function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
   const byTlBlankStart = data.by_tl_blank_start || {};
@@ -570,13 +666,15 @@ function PartialDatesBody({ data, tlFilter }) {
   const prevByTlBlankEnd = data.prev_by_tl_blank_end || {};
   const prevByTlPartial = data.prev_by_tl_partial || {};
 
-  const allRecords = data.records || []; // tagged with tl_name + issue_type + repeat by the backend
+  const allRecords = data.records || [];
 
   const visibleRows = allRecords.filter((r) => {
     if (selected === "blank_start" && r.issue_type !== "blank_start") return false;
     if (selected === "blank_end" && r.issue_type !== "blank_end") return false;
     if (selected === "partial" && r.issue_type !== "partial") return false;
     if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
     return true;
   });
 
@@ -609,11 +707,13 @@ function PartialDatesBody({ data, tlFilter }) {
   };
   const repeatTotalCount = repeatCounts.blank_start + repeatCounts.blank_end + repeatCounts.partial;
 
-  // "Total" shows every flagged row (a row can appear once per bucket it
-  // qualifies for — same double-counting behavior Missing DOB has between
-  // Missing/Partial), any specific card isolates just its own bucket.
   const tableRows = selected === "total"
-    ? allRecords.filter((r) => !tlFilter || r.tl_name === tlFilter)
+    ? allRecords.filter((r) => {
+        if (tlFilter && r.tl_name !== tlFilter) return false;
+        if (recurrence === "repeat" && !r.repeat) return false;
+        if (recurrence === "new" && r.repeat) return false;
+        return true;
+      })
     : visibleRows;
 
   return (
@@ -679,6 +779,17 @@ function PartialDatesBody({ data, tlFilter }) {
         </div>
       )}
 
+      <FilterBar
+        state={state}
+        onStateChange={onStateChange}
+        states={states}
+        tlFilter={tlFilter}
+        onTlFilterChange={onTlFilterChange}
+        tlNames={tlNameList}
+        recurrence={recurrence}
+        onRecurrenceChange={onRecurrenceChange}
+      />
+
       <Table
         title="Flagged records"
         cols={["office_id", "full_name", "state", "current_office", "start_date", "start_status", "end_date", "end_status", "tl_name", "issue_type"]}
@@ -690,21 +801,146 @@ function PartialDatesBody({ data, tlFilter }) {
   );
 }
 
-// ---------- Spelling errors: clickable Total/Likely typos/Unrecognized + per-TL split ----------
-function SpellingBody({ data, tlFilter }) {
-  // "total" | "typos" | "unrecognized" — which card is active. Total shows
-  // both sections stacked as before; the other two isolate just that
-  // section plus its TL breakdown.
+// ---------- Social media: 12 per-platform cards (2 sections, distinct
+// colors) + repeat highlighting + State/TL/Status filters on both tables ----------
+function SocialMediaBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
+  const applyFilters = (records) => (records || []).filter((r) => {
+    if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
+    return true;
+  });
+
+  const allPersonRecords = data.person_records || [];
+  const allOhRecords = data.officeholder_records || [];
+
+  const visiblePersonRows = applyFilters(allPersonRecords);
+  const visibleOhRows = applyFilters(allOhRecords);
+
+  const repeatPersonCount = allPersonRecords.filter((r) => r.repeat).length;
+  const repeatOhCount = allOhRecords.filter((r) => r.repeat).length;
+
+  const summaryRowStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 10,
+    marginBottom: 26,
+  };
+
+  return (
+    <>
+      {/* Overview: total records, and count of records missing EVERY
+          platform on each side — the two numbers the tables below
+          actually show. */}
+      <div style={summaryRowStyle}>
+        <Stat label="Total records (verified + active)" value={data.total_count} prevValue={data.prev_total_count} />
+        <Stat
+          label="Missing ALL personal platforms"
+          value={data.flagged_count}
+          prevValue={data.prev_flagged_count}
+          color={PERSON_ACCENT}
+        />
+        <Stat
+          label="Missing ALL official platforms"
+          value={data.partial_count}
+          prevValue={data.prev_partial_count}
+          color={OFFICEHOLDER_ACCENT}
+        />
+      </div>
+
+      <div className="section-title" style={{ marginTop: 0 }}>Person — personal social media (verified + active only)</div>
+      <div className="platform-grid">
+        {Object.entries(data.person_missing || {}).map(([k, v]) => (
+          <Stat
+            key={k}
+            label={`${labelize(k)} missing`}
+            value={v}
+            prevValue={(data.prev_person_missing || {})[k]}
+            color={PERSON_ACCENT}
+            sub={`of ${data.total_count} records`}
+          />
+        ))}
+      </div>
+
+      <div className="section-title">Officeholder — official social media (verified + active only)</div>
+      <div className="platform-grid">
+        {Object.entries(data.officeholder_missing || {}).map(([k, v]) => (
+          <Stat
+            key={k}
+            label={`${labelize(k)} missing`}
+            value={v}
+            prevValue={(data.prev_officeholder_missing || {})[k]}
+            color={OFFICEHOLDER_ACCENT}
+            sub={`of ${data.total_count} records`}
+          />
+        ))}
+      </div>
+
+      <FilterBar
+        state={state}
+        onStateChange={onStateChange}
+        states={states}
+        tlFilter={tlFilter}
+        onTlFilterChange={onTlFilterChange}
+        tlNames={tlNameList}
+        recurrence={recurrence}
+        onRecurrenceChange={onRecurrenceChange}
+      />
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 -4px", flexWrap: "wrap" }}>
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+          Red row = same person/office was already missing every platform yesterday and is still unfixed today
+        </span>
+      </div>
+
+      <Table
+        title="Records missing all personal social media"
+        cols={["person_id", "full_name", "state", "current_office", "tl_name"]}
+        headers={["Person ID", "Name", "State", "Office", "TL"]}
+        rows={visiblePersonRows}
+        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
+      />
+      <Table
+        title="Records missing all official social media"
+        cols={["office_id", "current_office", "state", "government_body", "tl_name"]}
+        headers={["Office ID", "Office", "State", "Govt body", "TL"]}
+        rows={visibleOhRows}
+        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
+      />
+    </>
+  );
+}
+
+// ---------- Spelling errors: clickable Total/Likely typos/Unrecognized + per-TL split + repeat highlighting + State/TL/Status filters ----------
+function SpellingBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
   const byTlTypos = data.by_tl_typos || {};
   const byTlUnrecognized = data.by_tl_unrecognized || {};
   const tlNames = Array.from(new Set([...Object.keys(byTlTypos), ...Object.keys(byTlUnrecognized)])).sort();
 
-  const typoRecords = (data.records || []).filter((r) => !tlFilter || r.tl_name === tlFilter);
-  const unrecognizedRecords = (data.unrecognized_records || []).filter((r) => !tlFilter || r.tl_name === tlFilter);
+  const prevByTlMissing = data.prev_by_tl_missing || {};
+  const prevByTlPartial = data.prev_by_tl_partial || {};
+
+  const allTypoRecords = data.records || [];
+  const allUnrecognizedRecords = data.unrecognized_records || [];
+
+  const applyFilters = (records) => records.filter((r) => {
+    if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
+    return true;
+  });
+
+  const typoRecords = applyFilters(allTypoRecords);
+  const unrecognizedRecords = applyFilters(allUnrecognizedRecords);
 
   const activeByTl = selected === "typos" ? byTlTypos : selected === "unrecognized" ? byTlUnrecognized : null;
+  const prevActiveByTl = selected === "typos" ? prevByTlMissing : selected === "unrecognized" ? prevByTlPartial : null;
+
+  const repeatTypoCount = allTypoRecords.filter((r) => r.repeat).length;
+  const repeatUnrecognizedCount = allUnrecognizedRecords.filter((r) => r.repeat).length;
 
   const topRowStyle = {
     display: "grid",
@@ -724,12 +960,14 @@ function SpellingBody({ data, tlFilter }) {
         <Stat
           label="Total records"
           value={data.total_count}
+          prevValue={data.prev_total_count}
           active={selected === "total"}
           onClick={() => setSelected("total")}
         />
         <Stat
           label="Likely typos"
           value={data.flagged_count}
+          prevValue={data.prev_flagged_count}
           tone="flag"
           active={selected === "typos"}
           onClick={() => setSelected("typos")}
@@ -737,6 +975,7 @@ function SpellingBody({ data, tlFilter }) {
         <Stat
           label="Unrecognized words"
           value={data.unrecognized_count}
+          prevValue={data.prev_partial_count}
           tone="warn"
           active={selected === "unrecognized"}
           onClick={() => setSelected("unrecognized")}
@@ -750,6 +989,7 @@ function SpellingBody({ data, tlFilter }) {
               key={tl}
               label={tl}
               value={activeByTl[tl] || 0}
+              prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined}
               color={colorForTl(tl, tlNames)}
               compact
             />
@@ -757,12 +997,36 @@ function SpellingBody({ data, tlFilter }) {
         </div>
       )}
 
+      {selected !== "total" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+            Red row = same flagged word/value was already flagged yesterday and is still unfixed today
+          </span>
+          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
+            — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{selected === "typos" ? repeatTypoCount : repeatUnrecognizedCount}</b> total
+          </span>
+        </div>
+      )}
+
+      <FilterBar
+        state={state}
+        onStateChange={onStateChange}
+        states={states}
+        tlFilter={tlFilter}
+        onTlFilterChange={onTlFilterChange}
+        tlNames={tlNameList}
+        recurrence={recurrence}
+        onRecurrenceChange={onRecurrenceChange}
+      />
+
       {(selected === "total" || selected === "typos") && (
         <Table
           title="Likely typos"
           cols={["id", "field", "value", "flagged_words", "state", "tl_name"]}
           headers={["ID", "Field", "Value", "Flagged word → suggestion", "State", "TL"]}
           rows={typoRecords}
+          rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
         />
       )}
 
@@ -778,10 +1042,6 @@ function SpellingBody({ data, tlFilter }) {
 
 
 function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
-  // "total" | "missing" | "partial" — which card is active, driving both
-  // the TL cards shown alongside Missing/Partial and which rows show in
-  // the table below. The old dropdown was removed — cards are now the
-  // only way to switch views, defaulting to "total" (Missing + Partial).
   const [selected, setSelected] = useState("total");
 
   const byTlMissing = data.by_tl_missing || {};
@@ -791,7 +1051,7 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
   const prevByTlMissing = data.prev_by_tl_missing || {};
   const prevByTlPartial = data.prev_by_tl_partial || {};
 
-  const allRecords = data.records || []; // already tagged with tl_name + pm ("M"/"P") + repeat by the backend
+  const allRecords = data.records || [];
 
   const visibleRows = allRecords.filter((r) => {
     if (selected === "missing" && r.pm !== "M") return false;
@@ -802,11 +1062,6 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
     return true;
   });
 
-  // Fixed top row: Total + Missing + Partial always share ONE line, in a
-  // fixed 3-column grid — this row never resizes or reflows regardless of
-  // selection. The per-TL breakdown for whichever of Missing/Partial is
-  // selected renders in its own row directly underneath; nothing renders
-  // there when Total is selected.
   const topRowStyle = {
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
@@ -829,7 +1084,6 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
 
   return (
     <>
-      {/* Row 1: Total + Missing + Partial, always one fixed line */}
       <div style={topRowStyle}>
         <Stat
           label="Total records (verified + active)"
@@ -856,7 +1110,6 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
         />
       </div>
 
-      {/* Row 2: TL breakdown for whichever of Missing/Partial is selected — empty when Total is selected */}
       {activeByTl && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
@@ -906,13 +1159,6 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
   );
 }
 
-// prevValue: yesterday's raw number for this same metric, if available.
-// When present:
-//   - main value renders as "today(+delta)" e.g. "200(+100)" / "90(+40)" / "110(-5)"
-//   - a small badge in the card's top-right corner shows just yesterday's
-//     raw number (e.g. "100"), per the manager's exact spec.
-// On day 1 (no snapshot to compare against) prevValue is undefined/null and
-// the card falls back to showing the plain number with no badge, unchanged.
 function Stat({ label, value, tone, sub, active, onClick, color, compact, prevValue }) {
   const style = color
     ? { borderTop: `3px solid ${color}` }
@@ -967,14 +1213,6 @@ function Table(props) {
 
 function labelize(key) {
   return key.replace(/^(sm_|oh_)/, "").replace(/^\w/, (c) => c.toUpperCase());
-}
-
-function toneFor(missing, total) {
-  if (!total) return "";
-  const ratio = missing / total;
-  if (ratio > 0.5) return "flag";
-  if (ratio > 0.2) return "warn";
-  return "ok";
 }
 
 function LookalikeTable({ records }) {
@@ -1122,8 +1360,6 @@ function UnrecognizedWordsTable({ records }) {
   const [pending, setPending] = useState(null);
   const [filter, setFilter] = useState("");
 
-  // Flatten (record, word) pairs — each row's flagged_words can hold
-  // multiple space/comma-separated words, each needs its own button.
   const rows = [];
   (records || []).forEach((r) => {
     r.flagged_words.split(",").map((w) => w.trim()).filter(Boolean).forEach((word) => {
@@ -1176,7 +1412,7 @@ function UnrecognizedWordsTable({ records }) {
           </thead>
           <tbody>
             {visibleRows.map((r, i) => (
-              <tr key={i}>
+              <tr key={i} className={r.repeat ? "dt-row-repeat" : undefined}>
                 <td style={{ fontFamily: "monospace", fontSize: 11 }}>{r.id}</td>
                 <td>{r.field}</td>
                 <td>{r.value}</td>
