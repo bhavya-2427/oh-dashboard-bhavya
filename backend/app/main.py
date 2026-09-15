@@ -167,6 +167,7 @@ def _selection_method_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
         "total_count": result["total_count"],
         "flagged_count": result["flagged_count"],
         "by_tl_missing": _by_tl_counts(flagged_records, state_to_tl),
+        "flagged_office_ids": [r.get("office_id") for r in flagged_records if r.get("office_id")],
     }
 
 
@@ -580,6 +581,37 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
                 prev_ids = set(prev.get("flagged_office_ids", []))
                 for rec in result["records"]:
                     oid = rec.get("id")
+                    rec["repeat"] = bool(oid) and oid in prev_ids
+            else:
+                for rec in result["records"]:
+                    rec["repeat"] = False
+
+        if key == "selection_method":
+            state_to_tl = _state_to_tl_map(db)
+            flagged_records = result.get("records", [])
+            result["by_tl_missing"] = _by_tl_counts(flagged_records, state_to_tl)
+            result["records"] = _tag_with_tl(flagged_records, state_to_tl)
+
+            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "selection_method", date.today().isoformat())
+            if prev:
+                result["prev_total_count"] = prev.get("total_count")
+                result["prev_flagged_count"] = prev.get("flagged_count")
+                result["prev_by_tl_missing"] = prev.get("by_tl_missing", {})
+
+                if "flagged_office_ids" not in prev:
+                    backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
+                    if backfill_upload_id:
+                        backfill_df = database.load_records(db, backfill_upload_id)
+                        if backfill_df is not None:
+                            backfill_result = validations.check_selection_method(backfill_df, detail=True)
+                            prev["flagged_office_ids"] = [
+                                r.get("office_id") for r in backfill_result.get("records", []) if r.get("office_id")
+                            ]
+                            database.save_daily_check_snapshot(db, prev_date, "selection_method", prev)
+
+                prev_ids = set(prev.get("flagged_office_ids", []))
+                for rec in result["records"]:
+                    oid = rec.get("office_id")
                     rec["repeat"] = bool(oid) and oid in prev_ids
             else:
                 for rec in result["records"]:

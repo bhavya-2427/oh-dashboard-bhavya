@@ -30,7 +30,7 @@ COLUMN_MAP = {
 }
 
 TITLE_PREFIXES = {"Dr.", "Prof.", "Capt.", "Adv.", "Col."}
-APPOINTED_KEYWORDS = ["judge", "governor", "minister", "cabinet"]
+APPOINTED_KEYWORDS = ["judge", "chief justice", "governor", "minister", "cabinet"]
 INDIRECT_KEYWORDS = ["speaker", "deputy speaker", "dy. speaker", "chairman", "vice chairman", "vice-chairman"]
 
 
@@ -283,7 +283,7 @@ def check_selection_method(df, detail=False, limit=None):
         "blank_method_count": int((df["_actual"] == "").sum()),
     }
     if detail:
-        out = flagged[["office_id", "full_name", "office_role", "current_office", "_actual", "_expected"]].rename(
+        out = flagged[["office_id", "full_name", "state", "office_role", "current_office", "_actual", "_expected"]].rename(
             columns={"_actual": "recorded_method", "_expected": "expected_method"}
         )
         result["records"] = _all(out)
