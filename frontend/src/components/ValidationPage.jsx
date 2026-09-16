@@ -20,10 +20,6 @@ const TITLES = {
   upcoming_deadlines: ["Upcoming deadlines", "Flags any tenure whose End Date falls within the next 15 days, so nobody misses a seat that needs action soon. A record disappears from this list on its own once its End Date has passed."],
 };
 
-// Shared filter bar — State + Team Lead + (optionally) Recurrence, rendered
-// as compact rounded pills in a single row, right above the record table.
-// `onRecurrenceChange` is only passed on pages that support it — when
-// absent, that third pill simply doesn't render.
 function FilterBar({ state, onStateChange, states, tlFilter, onTlFilterChange, tlNames, recurrence, onRecurrenceChange }) {
   return (
     <div className="filter-bar-row">
@@ -203,24 +199,17 @@ function ValidationBody({ pageKey, data, tlFilter, recurrence, state, onStateCha
       );
     case "selection_method":
       return (
-        <>
-          <div className="summary-row">
-            <Stat label="Records checked" value={data.total_count} />
-            <Stat label="Possible mismatch" value={data.flagged_count} tone="flag" />
-            <Stat label="Blank selection method" value={data.blank_method_count} tone="warn" />
-          </div>
-          <div className="placeholder-card" style={{ marginBottom: 16 }}>
-            <b>Reference mapping used (first pass)</b>
-            Appointed: judge, governor, minister, cabinet. Indirectly elected: speaker, deputy speaker, chairman.
-            Everything else defaults to directly-elected — replace with the official mapping once confirmed.
-          </div>
-          <Table
-            title="Possible mismatches"
-            cols={["office_id", "full_name", "office_role", "current_office", "recorded_method", "expected_method"]}
-            headers={["Office ID", "Name", "Office role", "Office", "Recorded method", "Expected"]}
-            rows={data.records}
-          />
-        </>
+        <SelectionMethodBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          state={state}
+          onStateChange={onStateChange}
+          states={states}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
       );
     case "seat_status": {
       const states = Object.entries(data.by_state || {}).sort((a, b) => (b[1].overdue) - (a[1].overdue));
@@ -273,14 +262,14 @@ function ValidationBody({ pageKey, data, tlFilter, recurrence, state, onStateCha
       );
     case "lookalike_parties":
       return (
-        <>
-          <div className="summary-row">
-            <Stat label="Distinct party names" value={data.total_count} />
-            <Stat label="Similar-looking pairs" value={data.flagged_count} tone="warn" />
-          </div>
-          <div className="section-title">Pairs for manual review <span className="hint">most similar first · counts are unique members (Person ID) · click a row to see states + IDs</span></div>
-          <LookalikeTable records={data.records} />
-        </>
+        <LookalikePartiesBody
+          data={data}
+          tlFilter={tlFilter}
+          recurrence={recurrence}
+          onTlFilterChange={onTlFilterChange}
+          tlNames={tlNames}
+          onRecurrenceChange={onRecurrenceChange}
+        />
       );
     case "multi_party":
       return (
@@ -345,8 +334,6 @@ function ValidationBody({ pageKey, data, tlFilter, recurrence, state, onStateCha
   }
 }
 
-// Distinct color per TL — same palette family as the History & Logs trend
-// chart. "Unassigned" always renders gray, cycling only applies to real TLs.
 const TL_COLOR_PALETTE = ["#4C7EA8", "#B08A2E", "#4C8A63", "#8B5FA3", "#A6403D", "#3F8F8A"];
 
 function colorForTl(tlName, tlNames) {
@@ -355,14 +342,9 @@ function colorForTl(tlName, tlNames) {
   return TL_COLOR_PALETTE[(idx < 0 ? 0 : idx) % TL_COLOR_PALETTE.length];
 }
 
-// Fixed accent colors for the Social Media check's two sections — Person
-// (personal accounts) is teal, Officeholder (official accounts) is
-// purple — so the two groups of platform cards read visually apart from
-// each other at a glance, independent of each platform's own severity.
 const PERSON_ACCENT = "#2E8B84";
 const OFFICEHOLDER_ACCENT = "#7A5AA8";
 
-// ---------- Prefix check: clickable Records checked/Correct/Mismatched/Blank + per-TL split ----------
 function PrefixBody({ data, tlFilter }) {
   const [selected, setSelected] = useState("total");
 
@@ -381,62 +363,24 @@ function PrefixBody({ data, tlFilter }) {
 
   const activeByTl = selected === "mismatch" ? byTlMismatch : selected === "blank" ? byTlBlank : null;
 
-  const topRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 10,
-  };
-  const tlRowStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`,
-    gap: 10,
-    marginTop: 10,
-  };
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
   const tableRows = selected === "correct" ? [] : visibleRows;
 
   return (
     <>
       <div style={topRowStyle}>
-        <Stat
-          label="Records checked"
-          value={data.total_count}
-          active={selected === "total"}
-          onClick={() => setSelected("total")}
-        />
-        <Stat
-          label="Prefix correct"
-          value={data.correct_count}
-          tone="ok"
-          active={selected === "correct"}
-          onClick={() => setSelected("correct")}
-        />
-        <Stat
-          label="Mismatched"
-          value={data.mismatch_count}
-          tone="flag"
-          active={selected === "mismatch"}
-          onClick={() => setSelected("mismatch")}
-        />
-        <Stat
-          label="Blank prefix"
-          value={data.blank_count}
-          tone="warn"
-          active={selected === "blank"}
-          onClick={() => setSelected("blank")}
-        />
+        <Stat label="Records checked" value={data.total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Prefix correct" value={data.correct_count} tone="ok" active={selected === "correct"} onClick={() => setSelected("correct")} />
+        <Stat label="Mismatched" value={data.mismatch_count} tone="flag" active={selected === "mismatch"} onClick={() => setSelected("mismatch")} />
+        <Stat label="Blank prefix" value={data.blank_count} tone="warn" active={selected === "blank"} onClick={() => setSelected("blank")} />
       </div>
 
       {activeByTl && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
-            <Stat
-              key={tl}
-              label={tl}
-              value={activeByTl[tl] || 0}
-              color={colorForTl(tl, tlNames)}
-              compact
-            />
+            <Stat key={tl} label={tl} value={activeByTl[tl] || 0} color={colorForTl(tl, tlNames)} compact />
           ))}
         </div>
       )}
@@ -457,7 +401,6 @@ function PrefixBody({ data, tlFilter }) {
   );
 }
 
-// ---------- Full name format: clickable Records checked/Format errors + per-TL split + repeat highlighting + State/TL/Status filters ----------
 function FullNameBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
@@ -475,73 +418,31 @@ function FullNameBody({ data, tlFilter, recurrence, state, onStateChange, states
 
   const repeatCount = allRecords.filter((r) => r.repeat).length;
 
-  const topRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 10,
-  };
-  const tlRowStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`,
-    gap: 10,
-    marginTop: 10,
-  };
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
   return (
     <>
       <div style={topRowStyle}>
-        <Stat
-          label="Records checked"
-          value={data.total_count}
-          prevValue={data.prev_total_count}
-          active={selected === "total"}
-          onClick={() => setSelected("total")}
-        />
-        <Stat
-          label="Format errors"
-          value={data.flagged_count}
-          prevValue={data.prev_flagged_count}
-          tone="flag"
-          active={selected === "flagged"}
-          onClick={() => setSelected("flagged")}
-        />
+        <Stat label="Records checked" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Format errors" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "flagged"} onClick={() => setSelected("flagged")} />
       </div>
 
       {selected === "flagged" && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
-            <Stat
-              key={tl}
-              label={tl}
-              value={byTlFullName[tl] || 0}
-              prevValue={(data.prev_by_tl_full_name || {})[tl]}
-              color={colorForTl(tl, tlNames)}
-              compact
-            />
+            <Stat key={tl} label={tl} value={byTlFullName[tl] || 0} prevValue={(data.prev_by_tl_full_name || {})[tl]} color={colorForTl(tl, tlNames)} compact />
           ))}
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
         <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          Red row = same Person ID was already flagged for this same issue yesterday and is still unfixed today
-        </span>
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total
-        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same Person ID was already flagged for this same issue yesterday and is still unfixed today</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
       </div>
 
-      <FilterBar
-        state={state}
-        onStateChange={onStateChange}
-        states={states}
-        tlFilter={tlFilter}
-        onTlFilterChange={onTlFilterChange}
-        tlNames={tlNameList}
-        recurrence={recurrence}
-        onRecurrenceChange={onRecurrenceChange}
-      />
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
       <Table
         title="Flagged records"
@@ -554,7 +455,6 @@ function FullNameBody({ data, tlFilter, recurrence, state, onStateChange, states
   );
 }
 
-// ---------- Naming convention: clickable Total/Format mismatches + per-TL split + repeat highlighting + State/TL/Status filters ----------
 function NamingConventionBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
@@ -572,73 +472,31 @@ function NamingConventionBody({ data, tlFilter, recurrence, state, onStateChange
 
   const repeatCount = allRecords.filter((r) => r.repeat).length;
 
-  const topRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 10,
-  };
-  const tlRowStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`,
-    gap: 10,
-    marginTop: 10,
-  };
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
   return (
     <>
       <div style={topRowStyle}>
-        <Stat
-          label="Total office titles checked"
-          value={data.total_count}
-          prevValue={data.prev_total_count}
-          active={selected === "total"}
-          onClick={() => setSelected("total")}
-        />
-        <Stat
-          label="Format mismatches"
-          value={data.flagged_count}
-          prevValue={data.prev_flagged_count}
-          tone="flag"
-          active={selected === "flagged"}
-          onClick={() => setSelected("flagged")}
-        />
+        <Stat label="Total office titles checked" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Format mismatches" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "flagged"} onClick={() => setSelected("flagged")} />
       </div>
 
       {selected === "flagged" && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
-            <Stat
-              key={tl}
-              label={tl}
-              value={byTlNaming[tl] || 0}
-              prevValue={(data.prev_by_tl_naming_convention || {})[tl]}
-              color={colorForTl(tl, tlNames)}
-              compact
-            />
+            <Stat key={tl} label={tl} value={byTlNaming[tl] || 0} prevValue={(data.prev_by_tl_naming_convention || {})[tl]} color={colorForTl(tl, tlNames)} compact />
           ))}
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
         <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          Red row = same office title was already flagged for this same issue yesterday and is still unfixed today
-        </span>
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total
-        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same office title was already flagged for this same issue yesterday and is still unfixed today</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
       </div>
 
-      <FilterBar
-        state={state}
-        onStateChange={onStateChange}
-        states={states}
-        tlFilter={tlFilter}
-        onTlFilterChange={onTlFilterChange}
-        tlNames={tlNameList}
-        recurrence={recurrence}
-        onRecurrenceChange={onRecurrenceChange}
-      />
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
       <Table
         title="Naming convention mismatches"
@@ -651,16 +509,73 @@ function NamingConventionBody({ data, tlFilter, recurrence, state, onStateChange
   );
 }
 
-// ---------- Partial dates: clickable Total/Blank start/Blank end/Partial + per-TL split + repeat highlighting + State/TL/Status filters ----------
+function SelectionMethodBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
+  const [selected, setSelected] = useState("total");
+
+  const byTlMissing = data.by_tl_missing || {};
+  const tlNames = Object.keys(byTlMissing).sort();
+
+  const allRecords = data.records || [];
+
+  const visibleRows = allRecords.filter((r) => {
+    if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
+    return true;
+  });
+
+  const repeatCount = allRecords.filter((r) => r.repeat).length;
+
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
+
+  return (
+    <>
+      <div style={topRowStyle}>
+        <Stat label="Records checked" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Possible mismatch" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "flagged"} onClick={() => setSelected("flagged")} />
+        <Stat label="Blank selection method" value={data.blank_method_count} tone="warn" />
+      </div>
+
+      {selected === "flagged" && (
+        <div style={tlRowStyle}>
+          {tlNames.map((tl) => (
+            <Stat key={tl} label={tl} value={byTlMissing[tl] || 0} prevValue={(data.prev_by_tl_missing || {})[tl]} color={colorForTl(tl, tlNames)} compact />
+          ))}
+        </div>
+      )}
+
+      <div className="placeholder-card" style={{ margin: "18px 0 0" }}>
+        <b>Reference mapping used</b>
+        Appointed: Chief Justice, Judge, Governor, Minister, Cabinet. Indirectly elected: Speaker, Deputy Speaker, President, Vice President, Rajya Sabha, MLC (Local Authorities / Assembly-nominated). Directly elected: MLA, Lok Sabha, MLC (Graduate / Teacher constituencies).
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same office was already flagged for this same issue yesterday and is still unfixed today</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
+      </div>
+
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
+
+      <Table
+        title="Possible mismatches"
+        cols={["office_id", "full_name", "office_role", "current_office", "recorded_method", "expected_method", "tl_name"]}
+        headers={["Office ID", "Name", "Office role", "Office", "Recorded method", "Expected", "TL"]}
+        rows={visibleRows}
+        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
+      />
+    </>
+  );
+}
+
 function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
   const byTlBlankStart = data.by_tl_blank_start || {};
   const byTlBlankEnd = data.by_tl_blank_end || {};
   const byTlPartial = data.by_tl_partial || {};
-  const tlNames = Array.from(new Set([
-    ...Object.keys(byTlBlankStart), ...Object.keys(byTlBlankEnd), ...Object.keys(byTlPartial),
-  ])).sort();
+  const tlNames = Array.from(new Set([...Object.keys(byTlBlankStart), ...Object.keys(byTlBlankEnd), ...Object.keys(byTlPartial)])).sort();
 
   const prevByTlBlankStart = data.prev_by_tl_blank_start || {};
   const prevByTlBlankEnd = data.prev_by_tl_blank_end || {};
@@ -678,34 +593,17 @@ function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, st
     return true;
   });
 
-  const topRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: 10,
-  };
-  const tlRowStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`,
-    gap: 10,
-    marginTop: 10,
-  };
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
-  const activeByTl =
-    selected === "blank_start" ? byTlBlankStart :
-    selected === "blank_end" ? byTlBlankEnd :
-    selected === "partial" ? byTlPartial : null;
-
-  const prevActiveByTl =
-    selected === "blank_start" ? prevByTlBlankStart :
-    selected === "blank_end" ? prevByTlBlankEnd :
-    selected === "partial" ? prevByTlPartial : null;
+  const activeByTl = selected === "blank_start" ? byTlBlankStart : selected === "blank_end" ? byTlBlankEnd : selected === "partial" ? byTlPartial : null;
+  const prevActiveByTl = selected === "blank_start" ? prevByTlBlankStart : selected === "blank_end" ? prevByTlBlankEnd : selected === "partial" ? prevByTlPartial : null;
 
   const repeatCounts = {
     blank_start: allRecords.filter((r) => r.issue_type === "blank_start" && r.repeat).length,
     blank_end: allRecords.filter((r) => r.issue_type === "blank_end" && r.repeat).length,
     partial: allRecords.filter((r) => r.issue_type === "partial" && r.repeat).length,
   };
-  const repeatTotalCount = repeatCounts.blank_start + repeatCounts.blank_end + repeatCounts.partial;
 
   const tableRows = selected === "total"
     ? allRecords.filter((r) => {
@@ -719,50 +617,16 @@ function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, st
   return (
     <>
       <div style={topRowStyle}>
-        <Stat
-          label="Total records (verified + active)"
-          value={data.total_count}
-          prevValue={data.prev_total_count}
-          active={selected === "total"}
-          onClick={() => setSelected("total")}
-        />
-        <Stat
-          label="Blank start date"
-          value={data.blank_start}
-          prevValue={data.prev_blank_start}
-          tone="flag"
-          active={selected === "blank_start"}
-          onClick={() => setSelected("blank_start")}
-        />
-        <Stat
-          label="Blank end date"
-          value={data.blank_end}
-          prevValue={data.prev_blank_end}
-          tone="flag"
-          active={selected === "blank_end"}
-          onClick={() => setSelected("blank_end")}
-        />
-        <Stat
-          label="Partial (year/month only)"
-          value={data.partial_start + data.partial_end}
-          prevValue={data.prev_partial_count}
-          tone="warn"
-          active={selected === "partial"}
-          onClick={() => setSelected("partial")}
-        />
+        <Stat label="Total records (verified + active)" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Blank start date" value={data.blank_start} prevValue={data.prev_blank_start} tone="flag" active={selected === "blank_start"} onClick={() => setSelected("blank_start")} />
+        <Stat label="Blank end date" value={data.blank_end} prevValue={data.prev_blank_end} tone="flag" active={selected === "blank_end"} onClick={() => setSelected("blank_end")} />
+        <Stat label="Partial (year/month only)" value={data.partial_start + data.partial_end} prevValue={data.prev_partial_count} tone="warn" active={selected === "partial"} onClick={() => setSelected("partial")} />
       </div>
 
       {activeByTl && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
-            <Stat
-              key={tl}
-              label={tl}
-              value={activeByTl[tl] || 0}
-              prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined}
-              color={colorForTl(tl, tlNames)}
-              compact
-            />
+            <Stat key={tl} label={tl} value={activeByTl[tl] || 0} prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined} color={colorForTl(tl, tlNames)} compact />
           ))}
         </div>
       )}
@@ -770,25 +634,12 @@ function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, st
       {selected !== "total" && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
           <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-            Red row = same Office ID was already flagged for this same issue yesterday and is still unfixed today
-          </span>
-          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-            — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCounts[selected] || 0}</b> total
-          </span>
+          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same Office ID was already flagged for this same issue yesterday and is still unfixed today</span>
+          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCounts[selected] || 0}</b> total</span>
         </div>
       )}
 
-      <FilterBar
-        state={state}
-        onStateChange={onStateChange}
-        states={states}
-        tlFilter={tlFilter}
-        onTlFilterChange={onTlFilterChange}
-        tlNames={tlNameList}
-        recurrence={recurrence}
-        onRecurrenceChange={onRecurrenceChange}
-      />
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
       <Table
         title="Flagged records"
@@ -801,9 +652,9 @@ function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, st
   );
 }
 
-// ---------- Social media: 12 per-platform cards (2 sections, distinct
-// colors) + repeat highlighting + State/TL/Status filters on both tables ----------
 function SocialMediaBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
+  const [selected, setSelected] = useState("person_all");
+
   const applyFilters = (records) => (records || []).filter((r) => {
     if (tlFilter && r.tl_name !== tlFilter) return false;
     if (recurrence === "repeat" && !r.repeat) return false;
@@ -813,25 +664,52 @@ function SocialMediaBody({ data, tlFilter, recurrence, state, onStateChange, sta
 
   const allPersonRecords = data.person_records || [];
   const allOhRecords = data.officeholder_records || [];
+  const personPlatformRecords = data.person_platform_records || {};
+  const ohPlatformRecords = data.officeholder_platform_records || {};
 
-  const visiblePersonRows = applyFilters(allPersonRecords);
-  const visibleOhRows = applyFilters(allOhRecords);
+  const byTlPersonPlatform = data.by_tl_person_platform || {};
+  const byTlOhPlatform = data.by_tl_officeholder_platform || {};
+  const prevByTlPersonPlatform = data.prev_by_tl_person_platform || {};
+  const prevByTlOhPlatform = data.prev_by_tl_officeholder_platform || {};
 
-  const repeatPersonCount = allPersonRecords.filter((r) => r.repeat).length;
-  const repeatOhCount = allOhRecords.filter((r) => r.repeat).length;
+  let activeRecords, activeByTl, activePrevByTl;
+  if (selected === "person_all") {
+    activeRecords = allPersonRecords;
+    activeByTl = data.by_tl_missing || {};
+    activePrevByTl = data.prev_by_tl_missing || {};
+  } else if (selected === "oh_all") {
+    activeRecords = allOhRecords;
+    activeByTl = data.by_tl_partial || {};
+    activePrevByTl = data.prev_by_tl_partial || {};
+  } else if (selected.startsWith("person:")) {
+    const platform = selected.slice("person:".length);
+    activeRecords = personPlatformRecords[platform] || [];
+    activeByTl = byTlPersonPlatform[platform] || {};
+    activePrevByTl = prevByTlPersonPlatform[platform] || {};
+  } else {
+    const platform = selected.slice("oh:".length);
+    activeRecords = ohPlatformRecords[platform] || [];
+    activeByTl = byTlOhPlatform[platform] || {};
+    activePrevByTl = prevByTlOhPlatform[platform] || {};
+  }
 
-  const summaryRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 10,
-    marginBottom: 26,
-  };
+  const tlNames = Object.keys(activeByTl).sort();
+  const visibleRows = applyFilters(activeRecords);
+  const repeatCount = activeRecords.filter((r) => r.repeat).length;
+
+  const isOfficeholderSide = selected === "oh_all" || selected.startsWith("oh:");
+  const tableCols = isOfficeholderSide
+    ? ["office_id", "current_office", "state", "government_body", "tl_name"]
+    : ["person_id", "full_name", "state", "current_office", "tl_name"];
+  const tableHeaders = isOfficeholderSide
+    ? ["Office ID", "Office", "State", "Govt body", "TL"]
+    : ["Person ID", "Name", "State", "Office", "TL"];
+
+  const summaryRowStyle = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginBottom: 26 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10, marginBottom: 20 };
 
   return (
     <>
-      {/* Overview: total records, and count of records missing EVERY
-          platform on each side — the two numbers the tables below
-          actually show. */}
       <div style={summaryRowStyle}>
         <Stat label="Total records (verified + active)" value={data.total_count} prevValue={data.prev_total_count} />
         <Stat
@@ -839,12 +717,16 @@ function SocialMediaBody({ data, tlFilter, recurrence, state, onStateChange, sta
           value={data.flagged_count}
           prevValue={data.prev_flagged_count}
           color={PERSON_ACCENT}
+          active={selected === "person_all"}
+          onClick={() => setSelected("person_all")}
         />
         <Stat
           label="Missing ALL official platforms"
           value={data.partial_count}
           prevValue={data.prev_partial_count}
           color={OFFICEHOLDER_ACCENT}
+          active={selected === "oh_all"}
+          onClick={() => setSelected("oh_all")}
         />
       </div>
 
@@ -858,6 +740,8 @@ function SocialMediaBody({ data, tlFilter, recurrence, state, onStateChange, sta
             prevValue={(data.prev_person_missing || {})[k]}
             color={PERSON_ACCENT}
             sub={`of ${data.total_count} records`}
+            active={selected === `person:${k}`}
+            onClick={() => setSelected(`person:${k}`)}
           />
         ))}
       </div>
@@ -872,47 +756,47 @@ function SocialMediaBody({ data, tlFilter, recurrence, state, onStateChange, sta
             prevValue={(data.prev_officeholder_missing || {})[k]}
             color={OFFICEHOLDER_ACCENT}
             sub={`of ${data.total_count} records`}
+            active={selected === `oh:${k}`}
+            onClick={() => setSelected(`oh:${k}`)}
           />
         ))}
       </div>
 
-      <FilterBar
-        state={state}
-        onStateChange={onStateChange}
-        states={states}
-        tlFilter={tlFilter}
-        onTlFilterChange={onTlFilterChange}
-        tlNames={tlNameList}
-        recurrence={recurrence}
-        onRecurrenceChange={onRecurrenceChange}
-      />
+      {tlNames.length > 0 && (
+        <>
+          <div className="section-title" style={{ marginTop: 24 }}>
+            {selected === "person_all" ? "Missing all personal platforms"
+              : selected === "oh_all" ? "Missing all official platforms"
+              : selected.startsWith("person:") ? `${labelize(selected.slice(7))} missing (personal)`
+              : `${labelize(selected.slice(3))} missing (official)`} — by team lead
+          </div>
+          <div style={tlRowStyle}>
+            {tlNames.map((tl) => (
+              <Stat key={tl} label={tl} value={activeByTl[tl] || 0} prevValue={activePrevByTl[tl]} color={colorForTl(tl, tlNames)} compact />
+            ))}
+          </div>
+        </>
+      )}
+
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 -4px", flexWrap: "wrap" }}>
         <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          Red row = same person/office was already missing every platform yesterday and is still unfixed today
-        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same person/office was already missing this on yesterday's upload and is still unfixed today</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
       </div>
 
       <Table
-        title="Records missing all personal social media"
-        cols={["person_id", "full_name", "state", "current_office", "tl_name"]}
-        headers={["Person ID", "Name", "State", "Office", "TL"]}
-        rows={visiblePersonRows}
-        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
-      />
-      <Table
-        title="Records missing all official social media"
-        cols={["office_id", "current_office", "state", "government_body", "tl_name"]}
-        headers={["Office ID", "Office", "State", "Govt body", "TL"]}
-        rows={visibleOhRows}
+        title="Flagged records"
+        cols={tableCols}
+        headers={tableHeaders}
+        rows={visibleRows}
         rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
       />
     </>
   );
 }
 
-// ---------- Spelling errors: clickable Total/Likely typos/Unrecognized + per-TL split + repeat highlighting + State/TL/Status filters ----------
 function SpellingBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
 
@@ -942,57 +826,21 @@ function SpellingBody({ data, tlFilter, recurrence, state, onStateChange, states
   const repeatTypoCount = allTypoRecords.filter((r) => r.repeat).length;
   const repeatUnrecognizedCount = allUnrecognizedRecords.filter((r) => r.repeat).length;
 
-  const topRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 10,
-  };
-  const tlRowStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`,
-    gap: 10,
-    marginTop: 10,
-  };
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
   return (
     <>
       <div style={topRowStyle}>
-        <Stat
-          label="Total records"
-          value={data.total_count}
-          prevValue={data.prev_total_count}
-          active={selected === "total"}
-          onClick={() => setSelected("total")}
-        />
-        <Stat
-          label="Likely typos"
-          value={data.flagged_count}
-          prevValue={data.prev_flagged_count}
-          tone="flag"
-          active={selected === "typos"}
-          onClick={() => setSelected("typos")}
-        />
-        <Stat
-          label="Unrecognized words"
-          value={data.unrecognized_count}
-          prevValue={data.prev_partial_count}
-          tone="warn"
-          active={selected === "unrecognized"}
-          onClick={() => setSelected("unrecognized")}
-        />
+        <Stat label="Total records" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Likely typos" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "typos"} onClick={() => setSelected("typos")} />
+        <Stat label="Unrecognized words" value={data.unrecognized_count} prevValue={data.prev_partial_count} tone="warn" active={selected === "unrecognized"} onClick={() => setSelected("unrecognized")} />
       </div>
 
       {activeByTl && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
-            <Stat
-              key={tl}
-              label={tl}
-              value={activeByTl[tl] || 0}
-              prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined}
-              color={colorForTl(tl, tlNames)}
-              compact
-            />
+            <Stat key={tl} label={tl} value={activeByTl[tl] || 0} prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined} color={colorForTl(tl, tlNames)} compact />
           ))}
         </div>
       )}
@@ -1000,25 +848,12 @@ function SpellingBody({ data, tlFilter, recurrence, state, onStateChange, states
       {selected !== "total" && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
           <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-            Red row = same flagged word/value was already flagged yesterday and is still unfixed today
-          </span>
-          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-            — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{selected === "typos" ? repeatTypoCount : repeatUnrecognizedCount}</b> total
-          </span>
+          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same flagged word/value was already flagged yesterday and is still unfixed today</span>
+          <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{selected === "typos" ? repeatTypoCount : repeatUnrecognizedCount}</b> total</span>
         </div>
       )}
 
-      <FilterBar
-        state={state}
-        onStateChange={onStateChange}
-        states={states}
-        tlFilter={tlFilter}
-        onTlFilterChange={onTlFilterChange}
-        tlNames={tlNameList}
-        recurrence={recurrence}
-        onRecurrenceChange={onRecurrenceChange}
-      />
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
       {(selected === "total" || selected === "typos") && (
         <Table
@@ -1039,7 +874,6 @@ function SpellingBody({ data, tlFilter, recurrence, state, onStateChange, states
     </>
   );
 }
-
 
 function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
@@ -1062,18 +896,8 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
     return true;
   });
 
-  const topRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 10,
-  };
-
-  const tlRowStyle = {
-    display: "grid",
-    gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`,
-    gap: 10,
-    marginTop: 10,
-  };
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
   const activeByTl = selected === "missing" ? byTlMissing : selected === "partial" ? byTlPartial : null;
   const prevActiveByTl = selected === "missing" ? prevByTlMissing : selected === "partial" ? prevByTlPartial : null;
@@ -1085,68 +909,27 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
   return (
     <>
       <div style={topRowStyle}>
-        <Stat
-          label="Total records (verified + active)"
-          value={data.total_count}
-          prevValue={data.prev_total_count}
-          active={selected === "total"}
-          onClick={() => setSelected("total")}
-        />
-        <Stat
-          label="DOB missing"
-          value={data.flagged_count}
-          prevValue={data.prev_flagged_count}
-          tone="flag"
-          active={selected === "missing"}
-          onClick={() => setSelected("missing")}
-        />
-        <Stat
-          label="DOB partial (year / year-month only)"
-          value={data.partial_count}
-          prevValue={data.prev_partial_count}
-          tone="warn"
-          active={selected === "partial"}
-          onClick={() => setSelected("partial")}
-        />
+        <Stat label="Total records (verified + active)" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="DOB missing" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "missing"} onClick={() => setSelected("missing")} />
+        <Stat label="DOB partial (year / year-month only)" value={data.partial_count} prevValue={data.prev_partial_count} tone="warn" active={selected === "partial"} onClick={() => setSelected("partial")} />
       </div>
 
       {activeByTl && (
         <div style={tlRowStyle}>
           {tlNames.map((tl) => (
-            <Stat
-              key={tl}
-              label={tl}
-              value={activeByTl[tl] || 0}
-              prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined}
-              color={colorForTl(tl, tlNames)}
-              compact
-            />
+            <Stat key={tl} label={tl} value={activeByTl[tl] || 0} prevValue={prevActiveByTl ? prevActiveByTl[tl] : undefined} color={colorForTl(tl, tlNames)} compact />
           ))}
         </div>
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
         <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          Red row = same Person ID was already flagged for this same issue (missing/partial) yesterday and is still unfixed today
-        </span>
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>
-          — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatTotalCount}</b> total
-          {" "}(<b style={{ color: "var(--red, #A6403D)" }}>{repeatMissingCount}</b> missing,{" "}
-          <b style={{ color: "var(--amber-dark, #8A6427)" }}>{repeatPartialCount}</b> partial)
-        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same Person ID was already flagged for this same issue (missing/partial) yesterday and is still unfixed today</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatTotalCount}</b> total {" "}(<b style={{ color: "var(--red, #A6403D)" }}>{repeatMissingCount}</b> missing,{" "}
+          <b style={{ color: "var(--amber-dark, #8A6427)" }}>{repeatPartialCount}</b> partial)</span>
       </div>
 
-      <FilterBar
-        state={state}
-        onStateChange={onStateChange}
-        states={states}
-        tlFilter={tlFilter}
-        onTlFilterChange={onTlFilterChange}
-        tlNames={tlNameList}
-        recurrence={recurrence}
-        onRecurrenceChange={onRecurrenceChange}
-      />
+      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
       <Table
         title="Records missing or partial DOB"
@@ -1159,10 +942,83 @@ function MissingDobBody({ data, tlFilter, recurrence, state, onStateChange, stat
   );
 }
 
+// ---------- Look-alike parties: no per-record State filter (a pair
+// spans two parties, each with its own multi-state breakdown) — TL +
+// Status filters only, using the dominant-TL tag computed on the
+// backend. ----------
+function LookalikePartiesBody({ data, tlFilter, recurrence, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
+  const [selected, setSelected] = useState("total");
+
+  const byTlMissing = data.by_tl_missing || {};
+  const tlNames = Object.keys(byTlMissing).sort();
+
+  const allRecords = data.records || [];
+
+  const visibleRows = allRecords.filter((r) => {
+    if (tlFilter && r.tl_name !== tlFilter) return false;
+    if (recurrence === "repeat" && !r.repeat) return false;
+    if (recurrence === "new" && r.repeat) return false;
+    return true;
+  });
+
+  const repeatCount = allRecords.filter((r) => r.repeat).length;
+
+  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 };
+  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
+
+  return (
+    <>
+      <div style={topRowStyle}>
+        <Stat label="Distinct party names" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+        <Stat label="Similar-looking pairs" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="warn" active={selected === "flagged"} onClick={() => setSelected("flagged")} />
+      </div>
+
+      {selected === "flagged" && (
+        <div style={tlRowStyle}>
+          {tlNames.map((tl) => (
+            <Stat key={tl} label={tl} value={byTlMissing[tl] || 0} prevValue={(data.prev_by_tl_missing || {})[tl]} color={colorForTl(tl, tlNames)} compact />
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
+        <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same pair of party names was already flagged yesterday and is still unfixed today</span>
+        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
+      </div>
+
+      <div className="filter-bar-row">
+        {tlNameList && tlNameList.length > 0 && (
+          <div className="filter-pill">
+            <span className="filter-pill-label">TL</span>
+            <select value={tlFilter} onChange={(e) => onTlFilterChange(e.target.value)}>
+              <option value="">All team leads</option>
+              {tlNameList.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {onRecurrenceChange && (
+          <div className="filter-pill">
+            <span className="filter-pill-label">Status</span>
+            <select value={recurrence} onChange={(e) => onRecurrenceChange(e.target.value)}>
+              <option value="all">All</option>
+              <option value="repeat">Repeat</option>
+              <option value="new">New</option>
+            </select>
+          </div>
+        )}
+      </div>
+
+      <div className="section-title">Pairs for manual review <span className="hint">most similar first · counts are unique members (Person ID) · click a row to see states + IDs</span></div>
+      <LookalikeTable records={visibleRows} />
+    </>
+  );
+}
+
 function Stat({ label, value, tone, sub, active, onClick, color, compact, prevValue }) {
-  const style = color
-    ? { borderTop: `3px solid ${color}` }
-    : undefined;
+  const style = color ? { borderTop: `3px solid ${color}` } : undefined;
 
   const hasPrev = prevValue !== undefined && prevValue !== null;
   const delta = hasPrev ? value - prevValue : null;
@@ -1174,10 +1030,7 @@ function Stat({ label, value, tone, sub, active, onClick, color, compact, prevVa
       onClick={onClick}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      style={{
-        ...style,
-        ...(compact ? { padding: "10px 11px 9px" } : undefined),
-      }}
+      style={{ ...style, ...(compact ? { padding: "10px 11px 9px" } : undefined) }}
     >
       {hasPrev && (
         <div className="stat-prev-badge" title={`Yesterday: ${prevValue}`}>
@@ -1190,14 +1043,7 @@ function Stat({ label, value, tone, sub, active, onClick, color, compact, prevVa
       <div className="value" style={{ ...(color ? { color } : undefined), ...(compact ? { fontSize: 19 } : undefined) }}>
         {value}
         {hasPrev && (
-          <span
-            style={{
-              fontSize: compact ? 12 : 15,
-              fontWeight: 500,
-              marginLeft: 5,
-              color: delta > 0 ? "#A6403D" : delta < 0 ? "#4C8A63" : "var(--muted)",
-            }}
-          >
+          <span style={{ fontSize: compact ? 12 : 15, fontWeight: 500, marginLeft: 5, color: delta > 0 ? "#A6403D" : delta < 0 ? "#4C8A63" : "var(--muted)" }}>
             ({deltaLabel})
           </span>
         )}
@@ -1228,19 +1074,13 @@ function LookalikeTable({ records }) {
   return (
     <div>
       <div className="dt-toolbar">
-        <input
-          type="text"
-          placeholder="Filter this table…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="dt-filter-input"
-        />
+        <input type="text" placeholder="Filter this table…" value={filter} onChange={(e) => setFilter(e.target.value)} className="dt-filter-input" />
         <button
           className="dt-download-btn"
           onClick={() => downloadCsv(
             "lookalike_parties",
-            ["Party A", "Members A", "Party B", "Members B", "Similarity %"],
-            ["party_a", "count_a", "party_b", "count_b", "similarity_pct"],
+            ["Party A", "Members A", "Party B", "Members B", "Similarity %", "TL"],
+            ["party_a", "count_a", "party_b", "count_b", "similarity_pct", "tl_name"],
             rows.map((r) => ({ ...r, similarity_pct: Math.round(r.similarity * 100) }))
           )}
           disabled={rows.length === 0}
@@ -1251,19 +1091,20 @@ function LookalikeTable({ records }) {
     <div className="tablewrap">
       <table>
         <thead>
-          <tr><th>Party A</th><th>Members</th><th>Party B</th><th>Members</th><th>Similarity</th></tr>
+          <tr><th>Party A</th><th>Members</th><th>Party B</th><th>Members</th><th>Similarity</th><th>TL</th></tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
             <React.Fragment key={i}>
-              <tr onClick={() => setOpenRow(openRow === i ? null : i)} style={{ cursor: "pointer" }}>
+              <tr onClick={() => setOpenRow(openRow === i ? null : i)} style={{ cursor: "pointer" }} className={r.repeat ? "dt-row-repeat" : undefined}>
                 <td>{r.party_a}</td><td>{r.count_a}</td>
                 <td>{r.party_b}</td><td>{r.count_b}</td>
                 <td>{Math.round(r.similarity * 100)}%</td>
+                <td>{r.tl_name}</td>
               </tr>
               {openRow === i && (
                 <tr>
-                  <td colSpan={5} className="lookalike-expand-cell">
+                  <td colSpan={6} className="lookalike-expand-cell">
                     <div className="lookalike-detail-row">
                       <PartyDetail name={r.party_a} states={r.states_a} ids={r.person_ids_a} />
                       <PartyDetail name={r.party_b} states={r.states_b} ids={r.person_ids_b} />
@@ -1287,14 +1128,9 @@ function PartyDetail({ name, states, ids }) {
   const [copied, setCopied] = useState(false);
 
   const filtered = (ids || []).filter(
-    (r) =>
-      !filter ||
-      r.person_id.toLowerCase().includes(filter.toLowerCase()) ||
-      r.state.toLowerCase().includes(filter.toLowerCase())
+    (r) => !filter || r.person_id.toLowerCase().includes(filter.toLowerCase()) || r.state.toLowerCase().includes(filter.toLowerCase())
   );
-  const sorted = sortByState
-    ? [...filtered].sort((a, b) => a.state.localeCompare(b.state))
-    : filtered;
+  const sorted = sortByState ? [...filtered].sort((a, b) => a.state.localeCompare(b.state)) : filtered;
 
   function copyIds() {
     navigator.clipboard.writeText(sorted.map((r) => r.person_id).join("\n"));
@@ -1325,15 +1161,8 @@ function PartyDetail({ name, states, ids }) {
       </div>
 
       <div className="lookalike-id-controls">
-        <input
-          type="text"
-          placeholder="Filter by ID or state…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <button onClick={() => setSortByState((v) => !v)}>
-          {sortByState ? "Sorted by state" : "Sort by state"}
-        </button>
+        <input type="text" placeholder="Filter by ID or state…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <button onClick={() => setSortByState((v) => !v)}>{sortByState ? "Sorted by state" : "Sort by state"}</button>
         <button onClick={copyIds}>{copied ? "Copied!" : "Copy IDs"}</button>
       </div>
 
@@ -1390,13 +1219,7 @@ function UnrecognizedWordsTable({ records }) {
   return (
     <div>
       <div className="dt-toolbar">
-        <input
-          type="text"
-          placeholder="Filter this table…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="dt-filter-input"
-        />
+        <input type="text" placeholder="Filter this table…" value={filter} onChange={(e) => setFilter(e.target.value)} className="dt-filter-input" />
         <button
           className="dt-download-btn"
           onClick={() => downloadCsv("unrecognized_words", ["ID", "Field", "Value", "Unrecognized word"], ["id", "field", "value", "word"], visibleRows)}

@@ -30,8 +30,6 @@ COLUMN_MAP = {
 }
 
 TITLE_PREFIXES = {"Dr.", "Prof.", "Capt.", "Adv.", "Col."}
-APPOINTED_KEYWORDS = ["judge", "governor", "minister", "cabinet"]
-INDIRECT_KEYWORDS = ["speaker", "deputy speaker", "dy. speaker", "chairman", "vice chairman", "vice-chairman"]
 
 
 def build_dataframe(raw: pd.DataFrame) -> pd.DataFrame:
@@ -251,18 +249,83 @@ def check_missing_dob(df, detail=False, limit=None):
 
 
 # ---------- Point 5: Selection method mismatch ----------
-def _expected_method(role: str, office: str) -> str:
-    text = f"{role} {office}".lower()
-    if any(k in text for k in APPOINTED_KEYWORDS):
-        return "appointed"
-    if any(k in text for k in INDIRECT_KEYWORDS):
-        return "indirectly-elected"
-    return "directly-elected"
+#
+# Explicit office-role -> expected-method rules, checked in priority
+# order (most specific first). This replaces the old loose single-word
+# keyword scan (APPOINTED_KEYWORDS / INDIRECT_KEYWORDS), which produced
+# wrong results whenever an office's exact wording didn't happen to
+# contain one of a handful of hardcoded words — e.g. "Chief Justice"
+# was missed entirely because the old list only checked for the
+# substring "judge", so every Chief Justice record was silently
+# defaulted to "directly-elected" instead of the correct "appointed".
+#
+# Rules mirror the manager-confirmed reference table exactly:
+#   MLA                                  -> directly-elected
+#   Member of Lok Sabha                  -> directly-elected
+#   MLC (Graduate / Teacher constituency)-> directly-elected
+#   Member of Rajya Sabha                -> indirectly-elected
+#   MLC (Local Authorities constituency) -> indirectly-elected
+#   MLC (Legislative Assembly Constituencies, i.e. nominated by MLAs)
+#                                         -> indirectly-elected
+#   Speaker / Deputy Speaker             -> indirectly-elected
+#   President / Vice President           -> indirectly-elected
+#   Minister(s) / Cabinet                -> appointed
+#   Chief Justice                        -> appointed
+#   Judge(s)                             -> appointed
+#   Governor                             -> appointed
+#
+# Each rule is (match_fn, expected_method); match_fn receives the
+# lowercased "{role} {office} {constituency}" text and the raw
+# constituency string (needed to distinguish MLC sub-types, which all
+# share the same office/role wording and only differ by constituency).
+def _mlc_constituency_type(constituency: str) -> str:
+    c = (constituency or "").lower()
+    if "graduate" in c:
+        return "graduate"
+    if "teacher" in c:
+        return "teacher"
+    if "local authorit" in c:
+        return "local_authorities"
+    if "legislative assembly constituenc" in c or "assembly constituenc" in c:
+        return "assembly_nominated"
+    return ""
+
+
+_SELECTION_RULES = [
+    # (predicate(text, constituency_type) -> bool, expected_method)
+    (lambda t, ct: "chief justice" in t, "appointed"),
+    (lambda t, ct: "judge" in t, "appointed"),
+    (lambda t, ct: "governor" in t, "appointed"),
+    (lambda t, ct: "minister" in t or "cabinet" in t, "appointed"),
+    (lambda t, ct: "deputy speaker" in t or "dy. speaker" in t or "dy speaker" in t, "indirectly-elected"),
+    (lambda t, ct: "speaker" in t, "indirectly-elected"),
+    (lambda t, ct: "vice president" in t, "indirectly-elected"),
+    (lambda t, ct: re.search(r"\bpresident\b", t) is not None and "vice" not in t, "indirectly-elected"),
+    (lambda t, ct: "rajya sabha" in t, "indirectly-elected"),
+    (lambda t, ct: ("legislative council" in t or "mlc" in t) and ct in ("local_authorities", "assembly_nominated"), "indirectly-elected"),
+    (lambda t, ct: ("legislative council" in t or "mlc" in t) and ct in ("graduate", "teacher"), "directly-elected"),
+    (lambda t, ct: "legislative council" in t or "mlc" in t, "directly-elected"),  # MLC fallback if constituency type unknown
+    (lambda t, ct: "lok sabha" in t, "directly-elected"),
+    (lambda t, ct: "legislative assembly" in t or "mla" in t, "directly-elected"),
+]
+
+
+def _expected_method(role: str, office: str, constituency: str = "") -> str:
+    text = f"{role} {office} {constituency}".lower()
+    ct = _mlc_constituency_type(constituency)
+    for predicate, expected in _SELECTION_RULES:
+        if predicate(text, ct):
+            return expected
+    return "directly-elected"  # conservative fallback for anything unmatched
 
 
 def check_selection_method(df, detail=False, limit=None):
     df = _verified_active(df).copy()
-    df["_expected"] = df.apply(lambda r: _expected_method(r["office_role"], r["current_office"]), axis=1)
+    constituency_col = df["tenure_constituency"] if "tenure_constituency" in df.columns else pd.Series([""] * len(df), index=df.index)
+    df["_expected"] = [
+        _expected_method(role, office, constituency)
+        for role, office, constituency in zip(df["office_role"], df["current_office"], constituency_col)
+    ]
     df["_actual"] = df["seat_placement_method"].str.lower()
     df.loc[df["_actual"] == "", "_actual"] = df["tenure_seat_method"].str.lower()
 
