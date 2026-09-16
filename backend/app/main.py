@@ -107,13 +107,6 @@ def _partial_dates_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
     }
 
 
-# ==========================================================================
-# Generic Deep Dive snapshot payload builders — one per remaining check.
-# All of these feed the SAME DailyCheckSnapshot table (keyed by check_key),
-# and are read back by the single generic /deep-dive/{check_key} endpoint
-# below. No new tables — just more rows with different check_key values.
-# ==========================================================================
-
 def _prefix_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
     all_flagged = result.get("records", [])
     mismatch_records = [r for r in all_flagged if r.get("issue_type") == "mismatch"]
@@ -172,21 +165,6 @@ def _selection_method_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
 
 
 def _social_media_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
-    """Stores everything needed for BOTH the two "missing ALL platforms"
-    overview cards AND every individual platform card to have a prev-day
-    delta, a by-TL breakdown, and repeat-offender tracking:
-      - flagged_count/partial_count = COUNT of records missing every
-        platform on that side (matches by_tl_missing/by_tl_partial below
-        and the two on-page tables exactly — NOT a sum across the 6
-        individual platform counts, which double-counts a person/office
-        missing multiple platforms).
-      - person_missing/officeholder_missing = per-platform counts (used
-        for each individual platform card's own delta).
-      - by_tl_person_platform/by_tl_officeholder_platform = per-platform
-        by-TL breakdowns, one dict per platform.
-      - person_platform_ids/officeholder_platform_ids = per-platform
-        flagged ID lists, used to detect repeats for any single platform
-        (not just "missing all")."""
     person_records = result.get("person_records", [])
     oh_records = result.get("officeholder_records", [])
     person_platform_records = result.get("person_platform_records", {})
@@ -219,35 +197,50 @@ def _overlapping_tenures_snapshot_payload(result: dict, state_to_tl: dict) -> di
     }
 
 
+def _dominant_tl_for_lookalike_pair(pair: dict, state_to_tl: dict) -> str:
+    """A look-alike pair spans two parties, each with its OWN state
+    breakdown (states_a/states_b — a list of {state, count}). To assign
+    one TL per pair (same "one flagged item, one TL" pattern every other
+    check uses), combine both sides' state counts and pick whichever TL
+    covers the most members across the pair. A pair with no state data
+    on either side falls into "Unassigned"."""
+    combined = {}
+    for side_key in ("states_a", "states_b"):
+        for entry in pair.get(side_key, []) or []:
+            st = entry.get("state")
+            cnt = entry.get("count", 0)
+            if not st or st == "—":
+                continue
+            combined[st] = combined.get(st, 0) + cnt
+    tl_totals = {}
+    for st, cnt in combined.items():
+        tl_name = state_to_tl.get(st, "Unassigned")
+        tl_totals[tl_name] = tl_totals.get(tl_name, 0) + cnt
+    if not tl_totals:
+        return "Unassigned"
+    return max(tl_totals.items(), key=lambda kv: kv[1])[0]
+
+
+def _lookalike_pair_key(pair: dict) -> str:
+    """Order-independent identity for a pair — the same two party names
+    flagged together are the same "issue" regardless of which side is
+    listed as A vs B on a given day, so this is used both for repeat
+    detection and as a stable dedupe key."""
+    return "||".join(sorted([pair.get("party_a", ""), pair.get("party_b", "")]))
+
+
 def _lookalike_parties_snapshot_payload(result: dict, state_to_tl: dict) -> dict:
     pairs = result.get("records", [])
-
-    def dominant_tl_for_pair(pair: dict) -> str:
-        combined = {}
-        for side_key in ("states_a", "states_b"):
-            for entry in pair.get(side_key, []) or []:
-                st = entry.get("state")
-                cnt = entry.get("count", 0)
-                if not st or st == "—":
-                    continue
-                combined[st] = combined.get(st, 0) + cnt
-        tl_totals = {}
-        for st, cnt in combined.items():
-            tl_name = state_to_tl.get(st, "Unassigned")
-            tl_totals[tl_name] = tl_totals.get(tl_name, 0) + cnt
-        if not tl_totals:
-            return "Unassigned"
-        return max(tl_totals.items(), key=lambda kv: kv[1])[0]
-
     by_tl = {}
     for pair in pairs:
-        tl_name = dominant_tl_for_pair(pair)
+        tl_name = _dominant_tl_for_lookalike_pair(pair, state_to_tl)
         by_tl[tl_name] = by_tl.get(tl_name, 0) + 1
 
     return {
         "total_count": result["total_count"],
         "flagged_count": result["flagged_count"],
         "by_tl_missing": by_tl,
+        "flagged_pair_keys": [_lookalike_pair_key(p) for p in pairs],
     }
 
 
@@ -507,7 +500,7 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
             result["unrecognized_records"] = tagged_unrecognized
             return result
         result = validations.REGISTRY[key](df, detail=True)
-        if "records" in result and key not in ("missing_dob", "prefix"):
+        if "records" in result and key not in ("missing_dob", "prefix", "lookalike_parties"):
             result["records"] = _dedupe_records(result["records"])
 
         if key == "prefix":
@@ -586,37 +579,6 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
                 for rec in result["records"]:
                     rec["repeat"] = False
 
-        if key == "selection_method":
-            state_to_tl = _state_to_tl_map(db)
-            flagged_records = result.get("records", [])
-            result["by_tl_missing"] = _by_tl_counts(flagged_records, state_to_tl)
-            result["records"] = _tag_with_tl(flagged_records, state_to_tl)
-
-            prev_date, prev = database.get_previous_check_snapshot_with_date(db, "selection_method", date.today().isoformat())
-            if prev:
-                result["prev_total_count"] = prev.get("total_count")
-                result["prev_flagged_count"] = prev.get("flagged_count")
-                result["prev_by_tl_missing"] = prev.get("by_tl_missing", {})
-
-                if "flagged_office_ids" not in prev:
-                    backfill_upload_id = database.find_latest_upload_id_on_date(db, prev_date)
-                    if backfill_upload_id:
-                        backfill_df = database.load_records(db, backfill_upload_id)
-                        if backfill_df is not None:
-                            backfill_result = validations.check_selection_method(backfill_df, detail=True)
-                            prev["flagged_office_ids"] = [
-                                r.get("office_id") for r in backfill_result.get("records", []) if r.get("office_id")
-                            ]
-                            database.save_daily_check_snapshot(db, prev_date, "selection_method", prev)
-
-                prev_ids = set(prev.get("flagged_office_ids", []))
-                for rec in result["records"]:
-                    oid = rec.get("office_id")
-                    rec["repeat"] = bool(oid) and oid in prev_ids
-            else:
-                for rec in result["records"]:
-                    rec["repeat"] = False
-
         if key == "social_media":
             state_to_tl = _state_to_tl_map(db)
             person_records = _tag_with_tl(result.get("person_records", []), state_to_tl)
@@ -624,9 +586,6 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
             person_platform_records = result.get("person_platform_records", {})
             oh_platform_records = result.get("officeholder_platform_records", {})
 
-            # Per-platform TL-tagged records, keyed by platform column
-            # name (e.g. "sm_facebook") — used when a specific platform
-            # card is clicked, to show that platform's own flagged list.
             tagged_person_platforms = {p: _tag_with_tl(recs, state_to_tl) for p, recs in person_platform_records.items()}
             tagged_oh_platforms = {p: _tag_with_tl(recs, state_to_tl) for p, recs in oh_platform_records.items()}
 
@@ -637,11 +596,6 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
             result["by_tl_missing"] = _by_tl_counts(person_records, state_to_tl)
             result["by_tl_partial"] = _by_tl_counts(oh_records, state_to_tl)
 
-            # "vs yesterday" (combined counts + EVERY individual platform's
-            # missing count) + repeat-offender flags — for the two "missing
-            # ALL platforms" tables AND every individual platform's own
-            # flagged list. Computed unconditionally regardless of any
-            # active state filter.
             prev_date, prev = database.get_previous_check_snapshot_with_date(db, "social_media", date.today().isoformat())
             if prev:
                 result["prev_total_count"] = prev.get("total_count")
@@ -654,10 +608,6 @@ def get_validation_detail(upload_id: str, key: str, state: str | None = None):
                 result["prev_by_tl_person_platform"] = prev.get("by_tl_person_platform", {})
                 result["prev_by_tl_officeholder_platform"] = prev.get("by_tl_officeholder_platform", {})
 
-                # Backfill: an old snapshot saved before the per-platform
-                # ID lists existed won't have those keys — recompute once
-                # from that day's original stored Excel, then save the
-                # backfilled payload so future loads use it directly.
                 needs_backfill = (
                     "person_missing_ids" not in prev
                     or "officeholder_missing_ids" not in prev
