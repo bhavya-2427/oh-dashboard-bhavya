@@ -613,65 +613,65 @@ function SelectionMethodBody({ data, tlFilter, recurrence, state, onStateChange,
   );
 }
 
-function SelectionMethodBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
-  const [selected, setSelected] = useState("total");
+// function SelectionMethodBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
+//   const [selected, setSelected] = useState("total");
 
-  const byTlMissing = data.by_tl_missing || {};
-  const tlNames = Object.keys(byTlMissing).sort();
+//   const byTlMissing = data.by_tl_missing || {};
+//   const tlNames = Object.keys(byTlMissing).sort();
 
-  const allRecords = data.records || [];
+//   const allRecords = data.records || [];
 
-  const visibleRows = allRecords.filter((r) => {
-    if (tlFilter && r.tl_name !== tlFilter) return false;
-    if (recurrence === "repeat" && !r.repeat) return false;
-    if (recurrence === "new" && r.repeat) return false;
-    return true;
-  });
+//   const visibleRows = allRecords.filter((r) => {
+//     if (tlFilter && r.tl_name !== tlFilter) return false;
+//     if (recurrence === "repeat" && !r.repeat) return false;
+//     if (recurrence === "new" && r.repeat) return false;
+//     return true;
+//   });
 
-  const repeatCount = allRecords.filter((r) => r.repeat).length;
+//   const repeatCount = allRecords.filter((r) => r.repeat).length;
 
-  const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 };
-  const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
+//   const topRowStyle = { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 };
+//   const tlRowStyle = { display: "grid", gridTemplateColumns: `repeat(${tlNames.length || 1}, minmax(0, 1fr))`, gap: 10, marginTop: 10 };
 
-  return (
-    <>
-      <div style={topRowStyle}>
-        <Stat label="Records checked" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
-        <Stat label="Possible mismatch" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "flagged"} onClick={() => setSelected("flagged")} />
-        <Stat label="Blank selection method" value={data.blank_method_count} tone="warn" />
-      </div>
+//   return (
+//     <>
+//       <div style={topRowStyle}>
+//         <Stat label="Records checked" value={data.total_count} prevValue={data.prev_total_count} active={selected === "total"} onClick={() => setSelected("total")} />
+//         <Stat label="Possible mismatch" value={data.flagged_count} prevValue={data.prev_flagged_count} tone="flag" active={selected === "flagged"} onClick={() => setSelected("flagged")} />
+//         <Stat label="Blank selection method" value={data.blank_method_count} tone="warn" />
+//       </div>
 
-      {selected === "flagged" && (
-        <div style={tlRowStyle}>
-          {tlNames.map((tl) => (
-            <Stat key={tl} label={tl} value={byTlMissing[tl] || 0} prevValue={(data.prev_by_tl_missing || {})[tl]} color={colorForTl(tl, tlNames)} compact />
-          ))}
-        </div>
-      )}
+//       {selected === "flagged" && (
+//         <div style={tlRowStyle}>
+//           {tlNames.map((tl) => (
+//             <Stat key={tl} label={tl} value={byTlMissing[tl] || 0} prevValue={(data.prev_by_tl_missing || {})[tl]} color={colorForTl(tl, tlNames)} compact />
+//           ))}
+//         </div>
+//       )}
 
-      <div className="placeholder-card" style={{ margin: "18px 0 0" }}>
-        <b>Reference mapping used</b>
-        Appointed: Chief Justice, Judge, Governor, Minister, Cabinet. Indirectly elected: Speaker, Deputy Speaker, President, Vice President, Rajya Sabha, MLC (Local Authorities / Assembly-nominated). Directly elected: MLA, Lok Sabha, MLC (Graduate / Teacher constituencies).
-      </div>
+//       <div className="placeholder-card" style={{ margin: "18px 0 0" }}>
+//         <b>Reference mapping used</b>
+//         Appointed: Chief Justice, Judge, Governor, Minister, Cabinet. Indirectly elected: Speaker, Deputy Speaker, President, Vice President, Rajya Sabha, MLC (Local Authorities / Assembly-nominated). Directly elected: MLA, Lok Sabha, MLC (Graduate / Teacher constituencies).
+//       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
-        <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same office was already flagged for this same issue yesterday and is still unfixed today</span>
-        <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
-      </div>
+//       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 -4px", flexWrap: "wrap" }}>
+//         <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--red-bg, #F7E7E5)", border: "1px solid var(--red, #A6403D)", display: "inline-block" }} />
+//         <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}>Red row = same office was already flagged for this same issue yesterday and is still unfixed today</span>
+//         <span style={{ fontSize: 11.5, color: "var(--muted, #6B6558)" }}> — <b style={{ fontSize: 13, color: "var(--red, #A6403D)" }}>{repeatCount}</b> total</span>
+//       </div>
 
-      <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
+//       <FilterBar state={state} onStateChange={onStateChange} states={states} tlFilter={tlFilter} onTlFilterChange={onTlFilterChange} tlNames={tlNameList} recurrence={recurrence} onRecurrenceChange={onRecurrenceChange} />
 
-      <Table
-        title="Possible mismatches"
-        cols={["office_id", "full_name", "office_role", "current_office", "recorded_method", "expected_method", "tl_name"]}
-        headers={["Office ID", "Name", "Office role", "Office", "Recorded method", "Expected", "TL"]}
-        rows={visibleRows}
-        rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
-      />
-    </>
-  );
-}
+//       <Table
+//         title="Possible mismatches"
+//         cols={["office_id", "full_name", "office_role", "current_office", "recorded_method", "expected_method", "tl_name"]}
+//         headers={["Office ID", "Name", "Office role", "Office", "Recorded method", "Expected", "TL"]}
+//         rows={visibleRows}
+//         rowClassName={(r) => (r.repeat ? "dt-row-repeat" : undefined)}
+//       />
+//     </>
+//   );
+// }
 
 function PartialDatesBody({ data, tlFilter, recurrence, state, onStateChange, states, onTlFilterChange, tlNames: tlNameList, onRecurrenceChange }) {
   const [selected, setSelected] = useState("total");
