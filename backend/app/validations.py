@@ -8,6 +8,7 @@ OfficeHolder India exports. If the export template changes, only
 COLUMN_MAP needs updating — nothing else.
 """
 import re
+import os
 import pandas as pd
 
 COLUMN_MAP = {
@@ -520,6 +521,45 @@ _INDIA_GOVT_ALLOWLIST = {
 }
 
 
+# ==========================================================================
+# Spelling checker — Indian-terms dictionary (proactive fix)
+#
+# pyspellchecker's default English word list has no concept of Indian
+# proper nouns or Hindi/regional transliterated admin terms, so words like
+# "Muzaffarnagar" or "Nagarpalika" used to get flagged every single time.
+# This loads a maintainable, external word list so common Indian words are
+# recognized BEFORE anything gets flagged — no manual "mark as correct"
+# needed for terms already in the list.
+# ==========================================================================
+
+_INDIAN_DICT_PATH = os.path.join(os.path.dirname(__file__), "data", "indian_dictionary.txt")
+
+
+def _load_indian_dictionary() -> set:
+    """One word per line, lowercase, in backend/app/data/indian_dictionary.txt.
+    Add to this file any time a genuine Indian name/place keeps getting
+    flagged — no code change needed, just add the word and restart."""
+    if not os.path.exists(_INDIAN_DICT_PATH):
+        return set()
+    with open(_INDIAN_DICT_PATH, encoding="utf-8") as f:
+        return {line.strip().lower() for line in f if line.strip() and not line.startswith("#")}
+
+
+_INDIAN_DICTIONARY = _load_indian_dictionary()
+
+# Suffixes common to Indian place/person names — a word ending in one of
+# these is sent straight to "unrecognized" instead of being force-
+# corrected to an unrelated English word via edit distance.
+_INDIAN_NAME_SUFFIXES = (
+    "pur", "pura", "puram", "nagar", "nagari", "abad", "garh", "gram", "gaon",
+    "wadi", "wala", "wal", "eshwar", "prasad", "narayan", "krishna",
+)
+
+
+def _looks_like_indian_proper_noun(word_lower: str) -> bool:
+    return len(word_lower) > 4 and word_lower.endswith(_INDIAN_NAME_SUFFIXES)
+
+
 def _edit_distance(a: str, b: str) -> int:
     m, n = len(a), len(b)
     dp = list(range(n + 1))
@@ -649,9 +689,10 @@ def check_spelling_errors(df, detail=False, limit=None, extra_allowlist=None):
 
     df = _verified_active(df)
 
-    allowlist = _INDIA_GOVT_ALLOWLIST | (extra_allowlist or set())
+    allowlist = _INDIA_GOVT_ALLOWLIST | _INDIAN_DICTIONARY | (extra_allowlist or set())
 
     sp = SpellChecker(distance=1)
+    sp.word_frequency.load_words(_INDIAN_DICTIONARY)  # so a real typo of an Indian word gets corrected TO the Indian word, not to an unrelated English one
     fields = [("current_office", "office_id"), ("government_body", "office_id")]
 
     # NOT anchored to the start of the string: a value can contain SEVERAL
@@ -686,11 +727,16 @@ def check_spelling_errors(df, detail=False, limit=None, extra_allowlist=None):
             return classify_cache[wl]
         if wl in allowlist or wl in sp:
             result = None
-        elif word_doc_count.get(wl, 0) > 2:
+        elif word_doc_count.get(wl, 0) > 1:
+            # appears in 2+ separate records — a real typo almost never repeats identically that often
             result = None
+        elif _looks_like_indian_proper_noun(wl):
+            # e.g. "...pur", "...nagar", "...garh" — don't force an English "correction" on these
+            result = ("unrecognized", None)
         else:
+            max_dist = 1 if len(wl) <= 5 else 2  # short words: a distance-2 "correction" is usually noise, not a real typo
             correction = sp.correction(wl)
-            if correction and correction != wl and _edit_distance(wl, correction) <= 2:
+            if correction and correction != wl and _edit_distance(wl, correction) <= max_dist:
                 result = ("typo", correction)
             else:
                 result = ("unrecognized", None)

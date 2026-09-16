@@ -15,7 +15,7 @@ Live (real logic, tested against your actual Excel files):
 - Selection method mismatch (point 5) — first-pass keyword mapping, replace with your official reference list
 - Seat status by state (point 13) — approximates "vacant" as "not marked active"; refine once you confirm exact vacancy statuses
 - Overlapping tenures (point 12) — **known noisy, awaiting manager sign-off**. Currently flags ANY date
-  overlap for the same person across tenure records with no grace window (confirmed: no overlap should ever
+  overlap for the same person across  tenure records with no grace window (confirmed: no overlap should ever
   be legitimate for a transfer/succession). BUT real data shows people legitimately holding an MLA seat +
   multiple Minister portfolios at the same time, which this currently flags too. Needs an exception rule for
   concurrent-but-different offices before this is trustworthy — see the in-app note on this page.
