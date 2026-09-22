@@ -612,11 +612,34 @@ def stop_onedrive_watcher():
 
 @app.get("/onedrive/status")
 def get_onedrive_status():
-    return {
-        **_auto_processing_state,
-        "folder_exists": ONEDRIVE_FOLDER.exists(),
-        "xlsx_files": len(list(ONEDRIVE_FOLDER.glob("*.xlsx"))) if ONEDRIVE_FOLDER.exists() else 0,
-    }
+    db = database.SessionLocal()
+    try:
+        latest = (
+            db.query(database.ProcessedFile)
+            .order_by(database.ProcessedFile.detected_at.desc())
+            .first()
+        )
+
+        status = dict(_auto_processing_state)
+
+        if latest is not None:
+            status.update({
+                "last_file": latest.filename,
+                "last_status": latest.status,
+                "last_error": latest.error_message,
+            })
+
+        return {
+            **status,
+            "folder_exists": ONEDRIVE_FOLDER.exists(),
+            "xlsx_files": (
+                len(list(ONEDRIVE_FOLDER.glob("*.xlsx")))
+                if ONEDRIVE_FOLDER.exists()
+                else 0
+            ),
+        }
+    finally:
+        db.close()
 
 
 @app.get("/uploads/latest")

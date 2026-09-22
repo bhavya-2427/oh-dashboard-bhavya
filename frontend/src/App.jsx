@@ -11,7 +11,7 @@ import TlWorklistPage from "./components/TlWorklistPage";
 import ManageTlsPage from "./components/ManageTlsPage";
 import LogsPage from "./components/LogsPage";
 import DeepDivePage from "./components/DeepDivePage";
-import { uploadFile, getSummary, getMe, getLatestUpload, clearCurrentUpload, getTeamLeads } from "./api";
+import { uploadFile, getSummary, getMe, getLatestUpload, clearCurrentUpload, getTeamLeads, getOneDriveStatus } from "./api";
 import { NAV_GROUPS } from "./navConfig";
 import { METRICS_BY_CHECK, DEEP_DIVE_TITLES } from "./deepDiveConfig";
 
@@ -32,6 +32,9 @@ export default function App() {
   const [extraCounts, setExtraCounts] = useState({});
   const [uploadError, setUploadError] = useState(null);
   const [uploading, setUploading] = useState(false);
+
+  const [oneDriveStatus, setOneDriveStatus] = useState(null);
+  const [oneDriveStatusError, setOneDriveStatusError] = useState(null);
 
   // TL/manager session — separate from the main uploader dashboard above.
   const [tlSession, setTlSession] = useState(null);
@@ -64,6 +67,33 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+  let active = true;
+
+  async function loadOneDriveStatus() {
+    try {
+      const status = await getOneDriveStatus();
+      if (active) {
+        setOneDriveStatus(status);
+        setOneDriveStatusError(null);
+      }
+    } catch (e) {
+      if (active) {
+        setOneDriveStatusError(e.message || "Unable to load OneDrive status");
+      }
+    }
+  }
+
+  loadOneDriveStatus();
+
+  const timer = setInterval(loadOneDriveStatus, 5000);
+
+  return () => {
+    active = false;
+    clearInterval(timer);
+  };
+}, []);
 
   function handleLogout() {
     localStorage.removeItem("oh_tl_token");
@@ -210,6 +240,24 @@ export default function App() {
             {tlSession.name}
             <span className="session-role-badge">{tlSession.role}</span>
           </span>
+          {oneDriveStatus && !oneDriveStatusError && (
+  <span className="live-badge">
+    <span className="live-dot"></span>
+    OneDrive Auto Processing
+    {oneDriveStatus.last_file && (
+      <span>· {oneDriveStatus.last_file}</span>
+    )}
+    {oneDriveStatus.last_status && (
+      <span>· {oneDriveStatus.last_status}</span>
+    )}
+  </span>
+)}
+
+{oneDriveStatusError && (
+  <span className="tb-btn tb-btn-danger">
+    OneDrive Status Unavailable
+  </span>
+)}
           {tlSession.role !== "manager" && (
             <button className="tb-btn" onClick={() => setViewMode("tl")}>Go to my worklist</button>
           )}

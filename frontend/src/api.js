@@ -226,3 +226,10 @@ export async function createTeamLead(username, name, password, states, role, con
   }
   return res.json();
 }
+
+// ---------- OneDrive automatic processing status ----------
+export async function getOneDriveStatus() {
+  const res = await fetch(`${BASE_URL}/onedrive/status`);
+  if (!res.ok) throw new Error("Failed to load OneDrive status");
+  return res.json();
+}
