@@ -471,12 +471,43 @@ async def upload_excel(file: UploadFile = File(...)):
 # Development/POC mode: the OneDrive desktop client syncs the shared/test folder
 # onto this machine. We watch that local folder and immediately process new .xlsx
 # files. Production can later replace this watcher with Microsoft Graph/webhooks.
-ONEDRIVE_FOLDER = Path(
-    os.environ.get(
-        "ONEDRIVE_FOLDER",
-        r"C:\Users\Bhavya\OneDrive\OH_Dashboard_Files",
+def _detect_onedrive_folder():
+    # 1. Explicit environment variable, if provided
+    configured_folder = os.environ.get("ONEDRIVE_FOLDER")
+    if configured_folder:
+        return Path(configured_folder)
+
+    # 2. Detect the user's OneDrive root automatically
+    onedrive_env_names = (
+        "OneDriveCommercial",
+        "OneDrive",
+        "OneDriveConsumer",
     )
-)
+
+    for env_name in onedrive_env_names:
+        root = os.environ.get(env_name)
+
+        if root:
+            candidate = Path(root) / "OH_Dashboard_Files"
+
+            if candidate.exists():
+                return candidate
+
+    # 3. Look for OneDrive folders under the user's Windows profile
+    home = Path.home()
+
+    for root in home.glob("OneDrive*"):
+        if root.is_dir():
+            candidate = root / "OH_Dashboard_Files"
+
+            if candidate.exists():
+                return candidate
+
+    # 4. Final fallback
+    return home / "OneDrive" / "OH_Dashboard_Files"
+
+
+ONEDRIVE_FOLDER = _detect_onedrive_folder()
 ONEDRIVE_POLL_SECONDS = float(os.environ.get("ONEDRIVE_POLL_SECONDS", "2"))
 AUTO_PROCESSING_ENABLED = os.environ.get("ONEDRIVE_AUTO_PROCESS", "1") != "0"
 _auto_watcher_thread = None
