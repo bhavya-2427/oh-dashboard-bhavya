@@ -37,6 +37,17 @@ class Upload(Base):
     # For large-scale use, move this to a proper `records` table with real columns.
     data_json = Column(Text)
 
+class ProcessedFile(Base):
+    __tablename__ = "processed_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    file_key = Column(String, unique=True, index=True)
+    filename = Column(String)
+    status = Column(String, index=True)
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    processed_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+
 
 class ValidationResult(Base):
     __tablename__ = "validation_results"
@@ -47,7 +58,13 @@ class ValidationResult(Base):
     total_count = Column(Integer)
 
 
-def save_upload(db, upload_id: str, filename: str, df: pd.DataFrame):
+def save_upload(
+    db,
+    upload_id: str,
+    filename: str,
+    df: pd.DataFrame,
+    commit: bool = True,
+):
     record = Upload(
         id=upload_id,
         filename=filename,
@@ -55,8 +72,9 @@ def save_upload(db, upload_id: str, filename: str, df: pd.DataFrame):
         data_json=df.to_json(orient="records"),
     )
     db.add(record)
-    db.commit()
 
+    if commit:
+        db.commit()
 
 def find_latest_upload_id_on_date(db, date_str: str):
     """Finds the most recent Upload whose uploaded_at falls on the given
@@ -76,7 +94,12 @@ def find_latest_upload_id_on_date(db, date_str: str):
     return row.id if row else None
 
 
-def save_results(db, upload_id: str, results: dict):
+def save_results(
+    db,
+    upload_id: str,
+    results: dict,
+    commit: bool = True,
+):
     for key, summary in results.items():
         db.add(ValidationResult(
             upload_id=upload_id,
@@ -84,7 +107,9 @@ def save_results(db, upload_id: str, results: dict):
             flagged_count=summary.get("flagged_count", 0),
             total_count=summary.get("total_count", 0),
         ))
-    db.commit()
+
+    if commit:
+        db.commit()
 
 
 def load_records(db, upload_id: str):
@@ -487,19 +512,37 @@ class DailyCheckSnapshot(Base):
     payload_json = Column(Text)
 
 
-def save_daily_check_snapshot(db, date_str: str, check_key: str, payload: dict):
+def save_daily_check_snapshot(
+    db,
+    date_str: str,
+    check_key: str,
+    payload: dict,
+    commit: bool = True,
+):
     existing = (
         db.query(DailyCheckSnapshot)
-        .filter(DailyCheckSnapshot.date == date_str, DailyCheckSnapshot.check_key == check_key)
+        .filter(
+            DailyCheckSnapshot.date == date_str,
+            DailyCheckSnapshot.check_key == check_key,
+        )
         .first()
     )
+
     payload_json = json.dumps(payload)
+
     if existing:
         existing.payload_json = payload_json
     else:
-        db.add(DailyCheckSnapshot(date=date_str, check_key=check_key, payload_json=payload_json))
-    db.commit()
+        db.add(
+            DailyCheckSnapshot(
+                date=date_str,
+                check_key=check_key,
+                payload_json=payload_json,
+            )
+        )
 
+    if commit:
+        db.commit()
 
 def get_previous_check_snapshot(db, check_key: str, before_date: str):
     """Latest snapshot for this check strictly before `before_date`
@@ -614,3 +657,44 @@ def delete_check_snapshot(db, check_key: str, date_str: str) -> bool:
     db.delete(row)
     db.commit()
     return True
+
+def get_processed_file(db, file_key: str):
+    return (
+        db.query(ProcessedFile)
+        .filter(ProcessedFile.file_key == file_key)
+        .first()
+    )
+
+
+def create_processed_file(db, file_key: str, filename: str):
+    record = ProcessedFile(
+        file_key=file_key,
+        filename=filename,
+        status="processing",
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def mark_processed_file_success(db, file_key: str):
+    record = get_processed_file(db, file_key)
+    if record is None:
+        return
+
+    record.status = "success"
+    record.processed_at = datetime.utcnow()
+    record.error_message = None
+    db.commit()
+
+
+def mark_processed_file_failed(db, file_key: str, error_message: str):
+    record = get_processed_file(db, file_key)
+    if record is None:
+        return
+
+    record.status = "failed"
+    record.processed_at = None
+    record.error_message = error_message
+    db.commit()

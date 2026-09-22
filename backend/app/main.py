@@ -6,6 +6,8 @@ import io
 import os
 import csv
 import uuid
+import threading
+import time
 from pathlib import Path
 from datetime import date, timedelta
 
@@ -294,6 +296,156 @@ def _get_upload_for_date(db, day_iso: str):
     return None
 
 
+# ---------- Shared Excel processing ----------
+
+def _read_oh_excel(contents: bytes):
+    try:
+        return pd.read_excel(io.BytesIO(contents), sheet_name="DB", header=None)
+    except ValueError:
+        return pd.read_excel(io.BytesIO(contents), sheet_name=0, header=None)
+
+
+def _calculate_excel_processing(contents: bytes, filename: str):
+    """Read and run ALL existing validations before changing dashboard data.
+
+    Keeping the calculation phase separate means a bad/new Excel normally fails
+    before the current successful dashboard upload is touched.
+    """
+    raw = _read_oh_excel(contents)
+    df = validations.build_dataframe(raw)
+
+    db = database.SessionLocal()
+    try:
+        allowlist = database.get_spelling_allowlist(db)
+        state_to_tl = _state_to_tl_map(db)
+    finally:
+        db.close()
+
+    results = validations.run_all(df, spelling_allowlist=allowlist)
+
+    mdob_result = validations.check_missing_dob(df, detail=True)
+    pdates_result = validations.check_partial_dates(df, detail=True)
+    prefix_result = validations.check_prefix(df, detail=True)
+    full_name_result = validations.check_full_name(df, detail=True)
+    naming_result = validations.check_naming_convention(df, detail=True)
+    spelling_result = validations.check_spelling_errors(df, detail=True, extra_allowlist=allowlist)
+    selection_result = validations.check_selection_method(df, detail=True)
+    social_result = validations.check_social_media(df, detail=True)
+    overlap_result = validations.check_overlapping_tenures(df, detail=True)
+    lookalike_result = validations.check_lookalike_parties(df, detail=True)
+    multiparty_result = validations.check_multi_party(df, detail=True)
+    deadlines_result = validations.check_upcoming_deadlines(df, detail=True)
+
+    today_iso = date.today().isoformat()
+    snapshot_payloads = {
+        "missing_dob": _missing_dob_snapshot_payload(mdob_result, state_to_tl),
+        "partial_dates": _partial_dates_snapshot_payload(pdates_result, state_to_tl),
+        "prefix": _prefix_snapshot_payload(prefix_result, state_to_tl),
+        "full_name": _full_name_snapshot_payload(full_name_result, state_to_tl),
+        "naming_convention": _naming_convention_snapshot_payload(naming_result, state_to_tl),
+        "spelling": _spelling_snapshot_payload(spelling_result, state_to_tl),
+        "selection_method": _selection_method_snapshot_payload(selection_result, state_to_tl),
+        "social_media": _social_media_snapshot_payload(social_result, state_to_tl),
+        "overlapping_tenures": _overlapping_tenures_snapshot_payload(overlap_result, state_to_tl),
+        "lookalike_parties": _lookalike_parties_snapshot_payload(lookalike_result, state_to_tl),
+        "multi_party": _multi_party_snapshot_payload(multiparty_result, state_to_tl),
+        "upcoming_deadlines": _upcoming_deadlines_snapshot_payload(deadlines_result, state_to_tl),
+    }
+
+    missing_records = mdob_result.get("records", [])
+    partial_records = mdob_result.get("partial_records", [])
+    combined_dob_records = (
+        _tag_with_tl_and_pm(missing_records, state_to_tl, "M")
+        + _tag_with_tl_and_pm(partial_records, state_to_tl, "P")
+    )
+
+    return {
+        "df": df,
+        "allowlist": allowlist,
+        "results": results,
+        "snapshot_payloads": snapshot_payloads,
+        "today_iso": today_iso,
+        "combined_dob_records": combined_dob_records,
+        "records_loaded": len(df),
+        "states": sorted([s for s in df["state"].dropna().unique().tolist() if s]),
+    }
+
+
+def _save_calculated_excel(calculated: dict, upload_id: str, filename: str, contents: bytes):
+    """Persist a successfully calculated Excel using one DB transaction."""
+    db = database.SessionLocal()
+
+    try:
+        # Keep all database writes in one transaction.
+        database.save_upload(
+            db,
+            upload_id,
+            filename,
+            calculated["df"],
+            commit=False,
+        )
+
+        database.save_results(
+            db,
+            upload_id,
+            calculated["results"],
+            commit=False,
+        )
+
+        for check_key, payload in calculated["snapshot_payloads"].items():
+            database.save_daily_check_snapshot(
+                db,
+                calculated["today_iso"],
+                check_key,
+                payload,
+                commit=False,
+            )
+
+        # Only make the new upload live after EVERYTHING succeeds.
+        db.commit()
+
+    except Exception:
+        # If anything fails, none of the above database changes are kept.
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+    # Keep the existing daily export behavior after the DB write succeeds.
+    folder = _daily_folder_for_today()
+    _save_original_excel(folder, filename, contents)
+    _write_module_csv(
+        folder,
+        "Missing DOB",
+        ["Person ID", "Name", "State", "Office", "DOB on file", "TL", "P/M"],
+        ["person_id", "full_name", "state", "current_office", "birth_date", "tl_name", "pm"],
+        calculated["combined_dob_records"],
+    )
+
+    # Keep the existing daily export behavior after the DB write succeeds.
+    folder = _daily_folder_for_today()
+    _save_original_excel(folder, filename, contents)
+    _write_module_csv(
+        folder,
+        "Missing DOB",
+        ["Person ID", "Name", "State", "Office", "DOB on file", "TL", "P/M"],
+        ["person_id", "full_name", "state", "current_office", "birth_date", "tl_name", "pm"],
+        calculated["combined_dob_records"],
+    )
+
+
+async def _process_manual_upload(contents: bytes, filename: str):
+    calculated = _calculate_excel_processing(contents, filename)
+    upload_id = str(uuid.uuid4())
+    _save_calculated_excel(calculated, upload_id, filename, contents)
+    return {
+        "upload_id": upload_id,
+        "records_loaded": calculated["records_loaded"],
+        "states": calculated["states"],
+    }
+
+
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)):
     today_iso = date.today().isoformat()
@@ -312,82 +464,158 @@ async def upload_excel(file: UploadFile = File(...)):
         db.close()
 
     contents = await file.read()
+    return await _process_manual_upload(contents, file.filename or "upload.xlsx")
+
+
+# ---------- Local OneDrive synced-folder automation ----------
+# Development/POC mode: the OneDrive desktop client syncs the shared/test folder
+# onto this machine. We watch that local folder and immediately process new .xlsx
+# files. Production can later replace this watcher with Microsoft Graph/webhooks.
+ONEDRIVE_FOLDER = Path(
+    os.environ.get(
+        "ONEDRIVE_FOLDER",
+        r"C:\Users\Bhavya\OneDrive\OH_Dashboard_Files",
+    )
+)
+ONEDRIVE_POLL_SECONDS = float(os.environ.get("ONEDRIVE_POLL_SECONDS", "2"))
+AUTO_PROCESSING_ENABLED = os.environ.get("ONEDRIVE_AUTO_PROCESS", "1") != "0"
+_auto_watcher_thread = None
+_auto_watcher_stop = threading.Event()
+_auto_processing_state = {
+    "enabled": AUTO_PROCESSING_ENABLED,
+    "folder": str(ONEDRIVE_FOLDER),
+    "last_scan_at": None,
+    "last_file": None,
+    "last_status": "not_started",
+    "last_error": None,
+}
+
+
+def _onedrive_file_key(path: Path) -> str:
+    stat = path.stat()
+    return f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+
+
+def _stable_file_bytes(path: Path):
+    """Wait until OneDrive has finished writing/syncing the file."""
+    first = path.stat()
+    time.sleep(0.5)
+    second = path.stat()
+    if first.st_size != second.st_size or first.st_mtime_ns != second.st_mtime_ns:
+        return None
+    return path.read_bytes()
+
+
+def _process_onedrive_file(path: Path):
+    filename = path.name
+    file_key = _onedrive_file_key(path)
+
+    # First make sure OneDrive has finished writing the file. Do not create a
+    # permanent "processing" record until the file is stable.
+    contents = _stable_file_bytes(path)
+    if contents is None:
+        return "still_syncing"
+
+    tracker = database.SessionLocal()
     try:
-        raw = pd.read_excel(io.BytesIO(contents), sheet_name="DB", header=None)
-    except ValueError:
-        raw = pd.read_excel(io.BytesIO(contents), sheet_name=0, header=None)
-
-    df = validations.build_dataframe(raw)
-
-    upload_id = str(uuid.uuid4())
-    db = database.SessionLocal()
-    try:
-        database.save_upload(db, upload_id, file.filename, df)
-        allowlist = database.get_spelling_allowlist(db)
-        results = validations.run_all(df, spelling_allowlist=allowlist)
-        database.save_results(db, upload_id, results)
-
-        folder = _daily_folder_for_today()
-        _save_original_excel(folder, file.filename, contents)
-
-        state_to_tl = _state_to_tl_map(db)
-        today_iso2 = date.today().isoformat()
-
-        mdob_result = validations.check_missing_dob(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "missing_dob", _missing_dob_snapshot_payload(mdob_result, state_to_tl))
-        missing_records = mdob_result.get("records", [])
-        partial_records = mdob_result.get("partial_records", [])
-        combined_dob_records = (
-            _tag_with_tl_and_pm(missing_records, state_to_tl, "M")
-            + _tag_with_tl_and_pm(partial_records, state_to_tl, "P")
-        )
-        _write_module_csv(
-            folder, "Missing DOB",
-            ["Person ID", "Name", "State", "Office", "DOB on file", "TL", "P/M"],
-            ["person_id", "full_name", "state", "current_office", "birth_date", "tl_name", "pm"],
-            combined_dob_records,
-        )
-
-        pdates_result = validations.check_partial_dates(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "partial_dates", _partial_dates_snapshot_payload(pdates_result, state_to_tl))
-
-        prefix_result = validations.check_prefix(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "prefix", _prefix_snapshot_payload(prefix_result, state_to_tl))
-
-        full_name_result = validations.check_full_name(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "full_name", _full_name_snapshot_payload(full_name_result, state_to_tl))
-
-        naming_result = validations.check_naming_convention(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "naming_convention", _naming_convention_snapshot_payload(naming_result, state_to_tl))
-
-        spelling_result = validations.check_spelling_errors(df, detail=True, extra_allowlist=allowlist)
-        database.save_daily_check_snapshot(db, today_iso2, "spelling", _spelling_snapshot_payload(spelling_result, state_to_tl))
-
-        selection_result = validations.check_selection_method(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "selection_method", _selection_method_snapshot_payload(selection_result, state_to_tl))
-
-        social_result = validations.check_social_media(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "social_media", _social_media_snapshot_payload(social_result, state_to_tl))
-
-        overlap_result = validations.check_overlapping_tenures(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "overlapping_tenures", _overlapping_tenures_snapshot_payload(overlap_result, state_to_tl))
-
-        lookalike_result = validations.check_lookalike_parties(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "lookalike_parties", _lookalike_parties_snapshot_payload(lookalike_result, state_to_tl))
-
-        multiparty_result = validations.check_multi_party(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "multi_party", _multi_party_snapshot_payload(multiparty_result, state_to_tl))
-
-        deadlines_result = validations.check_upcoming_deadlines(df, detail=True)
-        database.save_daily_check_snapshot(db, today_iso2, "upcoming_deadlines", _upcoming_deadlines_snapshot_payload(deadlines_result, state_to_tl))
-
+        existing = database.get_processed_file(tracker, file_key)
+        if existing is not None and existing.status == "success":
+            return "already_processed"
+        if existing is not None and existing.status == "processing":
+            return "already_processing"
+        if existing is not None and existing.status == "failed":
+            # A failed file is left available for manual retry/re-upload. A
+            # changed file gets a new file_key and can be processed normally.
+            return "previously_failed"
+        database.create_processed_file(tracker, file_key, filename)
     finally:
-        db.close()
+        tracker.close()
 
+    try:
+        calculated = _calculate_excel_processing(contents, filename)
+        upload_id = str(uuid.uuid4())
+        _save_calculated_excel(calculated, upload_id, filename, contents)
+
+        tracker = database.SessionLocal()
+        try:
+            database.mark_processed_file_success(tracker, file_key)
+        finally:
+            tracker.close()
+
+        _auto_processing_state.update({
+            "last_file": filename,
+            "last_status": "success",
+            "last_error": None,
+        })
+        return "success"
+    except Exception as exc:
+        # The tracker is deliberately separate from the processing session so
+        # this failure status survives even when Excel processing fails.
+        tracker = database.SessionLocal()
+        try:
+            database.mark_processed_file_failed(tracker, file_key, str(exc))
+        finally:
+            tracker.close()
+        _auto_processing_state.update({
+            "last_file": filename,
+            "last_status": "failed",
+            "last_error": str(exc),
+        })
+        return "failed"
+
+
+def _onedrive_watcher_loop():
+    ONEDRIVE_FOLDER.mkdir(parents=True, exist_ok=True)
+    while not _auto_watcher_stop.is_set():
+        try:
+            _auto_processing_state["last_scan_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            for path in sorted(ONEDRIVE_FOLDER.glob("*.xlsx")):
+                if _auto_watcher_stop.is_set():
+                    break
+                try:
+                    _process_onedrive_file(path)
+                except Exception as exc:
+                    _auto_processing_state.update({
+                        "last_file": path.name,
+                        "last_status": "failed",
+                        "last_error": str(exc),
+                    })
+        except Exception as exc:
+            _auto_processing_state.update({
+                "last_status": "watcher_error",
+                "last_error": str(exc),
+            })
+        _auto_watcher_stop.wait(ONEDRIVE_POLL_SECONDS)
+
+
+@app.on_event("startup")
+def start_onedrive_watcher():
+    global _auto_watcher_thread
+    if not AUTO_PROCESSING_ENABLED:
+        _auto_processing_state["last_status"] = "disabled"
+        return
+    if _auto_watcher_thread is not None and _auto_watcher_thread.is_alive():
+        return
+    _auto_watcher_stop.clear()
+    _auto_watcher_thread = threading.Thread(
+        target=_onedrive_watcher_loop,
+        name="onedrive-excel-watcher",
+        daemon=True,
+    )
+    _auto_watcher_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_onedrive_watcher():
+    _auto_watcher_stop.set()
+
+
+@app.get("/onedrive/status")
+def get_onedrive_status():
     return {
-        "upload_id": upload_id,
-        "records_loaded": len(df),
-        "states": sorted([s for s in df["state"].dropna().unique().tolist() if s]),
+        **_auto_processing_state,
+        "folder_exists": ONEDRIVE_FOLDER.exists(),
+        "xlsx_files": len(list(ONEDRIVE_FOLDER.glob("*.xlsx"))) if ONEDRIVE_FOLDER.exists() else 0,
     }
 
 
